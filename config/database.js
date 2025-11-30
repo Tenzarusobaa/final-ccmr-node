@@ -1,7 +1,7 @@
 // root/config/database.js
 const mysql = require("mysql2");
 
-/*const dbConfig = {
+const dbConfig = {
   host: process.env.CCMRHOST || "localhost",
   port: process.env.CCMRPORT || 3306,
   user: process.env.CCMRUSER || "root",
@@ -11,9 +11,9 @@ const mysql = require("mysql2");
   acquireTimeout: 60000,
   timeout: 60000,
   reconnect: true
-};*/
+};
 
-const dbConfig = {
+/*const dbConfig = {
   host: "localhost",
   port: 3306,
   user: "root",
@@ -23,7 +23,7 @@ const dbConfig = {
   acquireTimeout: 60000,
   timeout: 60000,
   reconnect: true
-};
+};*/
 
 
 
