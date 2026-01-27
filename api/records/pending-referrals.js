@@ -68,7 +68,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
 
 // Get all pending referrals (both case records and medical records)
 router.get("/pending-referrals", (req, res) => {
-  // Query for case record referrals
+  // Query for case record referrals - UPDATED to include cr_school_year_semester
   const caseRecordsQuery = `
     SELECT 
       cr_case_id as record_id,
@@ -77,6 +77,7 @@ router.get("/pending-referrals", (req, res) => {
       cr_student_strand,
       cr_student_grade_level,
       cr_student_section,
+      cr_school_year_semester, -- ADDED THIS LINE
       cr_violation_level,
       cr_case_date as record_date,
       cr_general_description as details,
@@ -88,7 +89,7 @@ router.get("/pending-referrals", (req, res) => {
     ORDER BY cr_case_date DESC
   `;
 
-  // Query for medical record referrals
+  // Query for medical record referrals - UPDATED to include mr_school_year_semester
   const medicalRecordsQuery = `
     SELECT 
       mr_medical_id as record_id,
@@ -97,6 +98,7 @@ router.get("/pending-referrals", (req, res) => {
       mr_student_strand,
       mr_grade_level as student_grade_level,
       mr_section as student_section,
+      mr_school_year_semester, -- ADDED THIS LINE
       NULL as violation_level,
       mr_record_date as record_date,
       mr_medical_details as details,
@@ -145,7 +147,7 @@ router.get("/pending-referrals", (req, res) => {
 router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
   const { recordId } = req.params;
   
-  // First, get the case details
+  // First, get the case details - UPDATED to include cr_school_year_semester
   const getCaseQuery = `
     SELECT 
       cr_student_id,
@@ -153,6 +155,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
       cr_student_strand,
       cr_student_grade_level,
       cr_student_section,
+      cr_school_year_semester, -- ADDED THIS LINE
       cr_general_description
     FROM tbl_case_records 
     WHERE cr_case_id = ? 
@@ -237,6 +240,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
         <h3>Case Referral Acceptance Notification</h3>
         <p><strong>Student:</strong> ${caseData.cr_student_name} (${caseData.cr_student_id})</p>
         <p><strong>Strand/Grade:</strong> ${caseData.cr_student_strand} - Grade ${caseData.cr_student_grade_level} ${caseData.cr_student_section}</p>
+        <p><strong>School Year & Semester:</strong> ${caseData.cr_school_year_semester || 'Not specified'}</p>
         <p><strong>Case Description:</strong> ${caseData.cr_general_description}</p>
         <p><strong>Case ID:</strong> ${recordId}</p>
         <p><strong>Status:</strong> Accepted by Guidance Counseling Office (GCO)</p>
@@ -252,7 +256,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
           }
         });
 
-      // Create a new counseling record
+      // Create a new counseling record - UPDATED to include schoolYearSemester
       const insertCounselingQuery = `
         INSERT INTO tbl_counseling_records (
           cor_origin_case_id,
@@ -262,10 +266,11 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
           cor_student_strand,
           cor_student_grade_level,
           cor_student_section,
+          cor_school_year_semester, -- ADDED THIS LINE
           cor_status,
           cor_general_concern,
           cor_is_psychological_condition
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const counselingValues = [
@@ -276,6 +281,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
         caseData.cr_student_strand,
         caseData.cr_student_grade_level,
         caseData.cr_student_section,
+        caseData.cr_school_year_semester || null, // ADDED THIS VALUE
         'TO SCHEDULE',
         caseData.cr_general_description,
         'UNCONFIRMED'
@@ -306,7 +312,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
 router.put("/pending-referrals/medical-record/:recordId/confirm", (req, res) => {
   const { recordId } = req.params;
   
-  // First, get the medical record details
+  // First, get the medical record details - UPDATED to include mr_school_year_semester
   const getMedicalQuery = `
     SELECT 
       mr_student_id,
@@ -314,6 +320,7 @@ router.put("/pending-referrals/medical-record/:recordId/confirm", (req, res) => 
       mr_student_strand,
       mr_grade_level,
       mr_section,
+      mr_school_year_semester, -- ADDED THIS LINE
       mr_medical_details,
       mr_is_psychological
     FROM tbl_medical_records 
@@ -349,120 +356,123 @@ router.put("/pending-referrals/medical-record/:recordId/confirm", (req, res) => 
       AND mr_referral_confirmation = 'Pending'
     `;
 
-  pool.query(updateQuery, [recordId], (err, updateResults) => {
-    if (err) {
-      console.error("Error updating medical referral:", err);
-      return res.status(500).json({
-        error: "Database update failed",
-        message: err.message
-      });
-    }
-
-    if (updateResults.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Medical record referral not found or already processed"
-      });
-    }
-
-    // Create acceptance notification for INF
-    const notificationQuery = `
-      INSERT INTO tbl_notifications (
-        n_sender,
-        n_receiver,
-        n_type,
-        n_message,
-        n_related_record_id,
-        n_related_record_type
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `;
-
-    const notificationMessage = `Medical referral for ${medicalData.mr_student_name} (${medicalData.mr_student_id}) has been accepted by GCO`;
-    
-    pool.query(notificationQuery, [
-      'GCO',
-      'INF',
-      'Acceptance',
-      notificationMessage,
-      recordId,
-      'medical_record'
-    ], (notifErr) => {
-      if (notifErr) {
-        console.error("Error creating acceptance notification:", notifErr);
-        // Continue even if notification fails
-      }
-    });
-
-    // Send email notification to INF
-    const emailSubject = `Medical Referral Accepted - ${medicalData.mr_student_name} (${medicalData.mr_student_id})`;
-    const emailMessage = `
-      <h3>Medical Referral Acceptance Notification</h3>
-      <p><strong>Student:</strong> ${medicalData.mr_student_name} (${medicalData.mr_student_id})</p>
-      <p><strong>Strand/Grade:</strong> ${medicalData.mr_student_strand} - Grade ${medicalData.mr_grade_level} ${medicalData.mr_section}</p>
-      <p><strong>Medical Details:</strong> ${medicalData.mr_medical_details}</p>
-      <p><strong>Psychological Condition:</strong> ${medicalData.mr_is_psychological}</p>
-      <p><strong>Medical Record ID:</strong> ${recordId}</p>
-      <p><strong>Status:</strong> Accepted by Guidance Counseling Office (GCO)</p>
-      <p>The GCO has accepted this medical referral and will proceed with counseling sessions.</p>
-    `;
-
-    sendEmailNotification('INF', emailSubject, emailMessage)
-      .then(emailSent => {
-        if (emailSent) {
-          console.log('Email notification sent successfully to INF');
-        } else {
-          console.log('Failed to send email notification to INF');
-        }
-      });
-
-    // Create a new counseling record
-    const insertCounselingQuery = `
-      INSERT INTO tbl_counseling_records (
-        cor_origin_medical_id,
-        cor_session_number,
-        cor_student_id_number,
-        cor_student_name,
-        cor_student_strand,
-        cor_student_grade_level,
-        cor_student_section,
-        cor_status,
-        cor_general_concern,
-        cor_is_psychological_condition
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const counselingValues = [
-      recordId, // cor_origin_medical_id
-      1,
-      medicalData.mr_student_id,
-      medicalData.mr_student_name,
-      medicalData.mr_student_strand,
-      medicalData.mr_grade_level,
-      medicalData.mr_section,
-      'TO SCHEDULE',
-      medicalData.mr_medical_details,
-      medicalData.mr_is_psychological === 'Yes' ? 'YES' : 'NO'
-    ];
-
-    pool.query(insertCounselingQuery, counselingValues, (err, insertResults) => {
+    pool.query(updateQuery, [recordId], (err, updateResults) => {
       if (err) {
-        console.error("Error creating counseling record:", err);
-        // Even if counseling record creation fails, we still confirmed the referral
-        return res.json({
-          success: true,
-          message: "Medical referral confirmed successfully, but failed to create counseling record",
-          warning: err.message
+        console.error("Error updating medical referral:", err);
+        return res.status(500).json({
+          error: "Database update failed",
+          message: err.message
         });
       }
 
-      res.json({
-        success: true,
-        message: "Medical referral confirmed and counseling record created successfully",
-        counselingRecordId: insertResults.insertId
+      if (updateResults.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Medical record referral not found or already processed"
+        });
+      }
+
+      // Create acceptance notification for INF
+      const notificationQuery = `
+        INSERT INTO tbl_notifications (
+          n_sender,
+          n_receiver,
+          n_type,
+          n_message,
+          n_related_record_id,
+          n_related_record_type
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `;
+
+      const notificationMessage = `Medical referral for ${medicalData.mr_student_name} (${medicalData.mr_student_id}) has been accepted by GCO`;
+      
+      pool.query(notificationQuery, [
+        'GCO',
+        'INF',
+        'Acceptance',
+        notificationMessage,
+        recordId,
+        'medical_record'
+      ], (notifErr) => {
+        if (notifErr) {
+          console.error("Error creating acceptance notification:", notifErr);
+          // Continue even if notification fails
+        }
+      });
+
+      // Send email notification to INF
+      const emailSubject = `Medical Referral Accepted - ${medicalData.mr_student_name} (${medicalData.mr_student_id})`;
+      const emailMessage = `
+        <h3>Medical Referral Acceptance Notification</h3>
+        <p><strong>Student:</strong> ${medicalData.mr_student_name} (${medicalData.mr_student_id})</p>
+        <p><strong>Strand/Grade:</strong> ${medicalData.mr_student_strand} - Grade ${medicalData.mr_grade_level} ${medicalData.mr_section}</p>
+        <p><strong>School Year & Semester:</strong> ${medicalData.mr_school_year_semester || 'Not specified'}</p>
+        <p><strong>Medical Details:</strong> ${medicalData.mr_medical_details}</p>
+        <p><strong>Psychological Condition:</strong> ${medicalData.mr_is_psychological}</p>
+        <p><strong>Medical Record ID:</strong> ${recordId}</p>
+        <p><strong>Status:</strong> Accepted by Guidance Counseling Office (GCO)</p>
+        <p>The GCO has accepted this medical referral and will proceed with counseling sessions.</p>
+      `;
+
+      sendEmailNotification('INF', emailSubject, emailMessage)
+        .then(emailSent => {
+          if (emailSent) {
+            console.log('Email notification sent successfully to INF');
+          } else {
+            console.log('Failed to send email notification to INF');
+          }
+        });
+
+      // Create a new counseling record - UPDATED to include schoolYearSemester
+      const insertCounselingQuery = `
+        INSERT INTO tbl_counseling_records (
+          cor_origin_medical_id,
+          cor_session_number,
+          cor_student_id_number,
+          cor_student_name,
+          cor_student_strand,
+          cor_student_grade_level,
+          cor_student_section,
+          cor_school_year_semester, -- ADDED THIS LINE
+          cor_status,
+          cor_general_concern,
+          cor_is_psychological_condition
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      const counselingValues = [
+        recordId, // cor_origin_medical_id
+        1,
+        medicalData.mr_student_id,
+        medicalData.mr_student_name,
+        medicalData.mr_student_strand,
+        medicalData.mr_grade_level,
+        medicalData.mr_section,
+        medicalData.mr_school_year_semester || null, // ADDED THIS VALUE
+        'TO SCHEDULE',
+        medicalData.mr_medical_details,
+        medicalData.mr_is_psychological === 'Yes' ? 'YES' : 'NO'
+      ];
+
+      pool.query(insertCounselingQuery, counselingValues, (err, insertResults) => {
+        if (err) {
+          console.error("Error creating counseling record:", err);
+          // Even if counseling record creation fails, we still confirmed the referral
+          return res.json({
+            success: true,
+            message: "Medical referral confirmed successfully, but failed to create counseling record",
+            warning: err.message
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Medical referral confirmed and counseling record created successfully",
+          counselingRecordId: insertResults.insertId
+        });
       });
     });
   });
-});
 });
 
 module.exports = router;

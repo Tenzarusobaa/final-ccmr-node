@@ -8,7 +8,7 @@ const { pool } = require("../../config/database");
 // GET all student data
 router.get("/student-data", (req, res) => {
   const query = `
-    SELECT 
+    SELECT DISTINCT
       sd_id_number as id,
       sd_student_name as name,
       sd_strand as strand,
@@ -19,7 +19,8 @@ router.get("/student-data", (req, res) => {
       sd_previous_school as previousSchool,
       sd_status as status,
       sd_birthdate as birthdate,
-      sd_school_year_sem as schoolYearSem
+      sd_school_year_sem as schoolYearSem,
+      sd_school_year_semesterr as schoolYearSemesterr
     FROM tbl_student_data 
     ORDER BY sd_id_number
   `;
@@ -45,11 +46,11 @@ router.get("/student-data", (req, res) => {
 // SEARCH student data
 router.get("/student-data/search", (req, res) => {
   const searchQuery = req.query.query;
-  
+
   if (!searchQuery) {
-    return res.status(400).json({ 
-      success: false, 
-      error: "Search query is required" 
+    return res.status(400).json({
+      success: false,
+      error: "Search query is required"
     });
   }
 
@@ -65,7 +66,8 @@ router.get("/student-data/search", (req, res) => {
       sd_previous_school as previousSchool,
       sd_status as status,
       sd_birthdate as birthdate,
-      sd_school_year_sem as schoolYearSem
+      sd_school_year_sem as schoolYearSem,
+      sd_school_year_semesterr as schoolYearSemesterr
     FROM tbl_student_data 
     WHERE (
       sd_id_number LIKE ? OR 
@@ -109,7 +111,7 @@ router.get("/student-data/search", (req, res) => {
 // GET student data by ID
 router.get("/student-data/:id", (req, res) => {
   const studentId = req.params.id;
-  
+
   const query = `
     SELECT 
       sd_id_number as id,
@@ -122,7 +124,8 @@ router.get("/student-data/:id", (req, res) => {
       sd_previous_school as previousSchool,
       sd_status as status,
       sd_birthdate as birthdate,
-      sd_school_year_sem as schoolYearSem
+      sd_school_year_sem as schoolYearSem,
+      sd_school_year_semesterr as schoolYearSemesterr
     FROM tbl_student_data 
     WHERE sd_id_number = ?
   `;
@@ -164,7 +167,8 @@ router.post("/student-data", (req, res) => {
     previousSchool,
     status,
     birthdate,
-    schoolYearSem
+    schoolYearSem,
+    schoolYearSemesterr
   } = req.body;
 
   const query = `
@@ -179,8 +183,9 @@ router.post("/student-data", (req, res) => {
       sd_previous_school,
       sd_status,
       sd_birthdate,
-      sd_school_year_sem
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sd_school_year_sem,
+      sd_school_year_semesterr
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   const values = [
@@ -194,7 +199,8 @@ router.post("/student-data", (req, res) => {
     previousSchool,
     status,
     birthdate,
-    schoolYearSem
+    schoolYearSem,
+    schoolYearSemesterr
   ];
 
   pool.query(query, values, (err, results) => {
@@ -228,7 +234,8 @@ router.put("/student-data/:id", (req, res) => {
     previousSchool,
     status,
     birthdate,
-    schoolYearSem
+    schoolYearSem,
+    schoolYearSemesterr
   } = req.body;
 
   const query = `
@@ -243,7 +250,8 @@ router.put("/student-data/:id", (req, res) => {
       sd_previous_school = ?,
       sd_status = ?,
       sd_birthdate = ?,
-      sd_school_year_sem = ?
+      sd_school_year_sem = ?,
+      sd_school_year_semesterr = ?
     WHERE sd_id_number = ?
   `;
 
@@ -258,6 +266,7 @@ router.put("/student-data/:id", (req, res) => {
     status,
     birthdate,
     schoolYearSem,
+    schoolYearSemesterr,
     studentId
   ];
 

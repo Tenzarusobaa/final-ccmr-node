@@ -68,7 +68,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-// Common query fields
+// Common query fields - UPDATED to include schoolYearSemester
 const counselingFields = `
   cor_record_id as recordId,
   cor_origin_medical_id as originMedicalId,
@@ -79,6 +79,7 @@ const counselingFields = `
   cor_student_strand as strand,
   cor_student_grade_level as gradeLevel,
   cor_student_section as section,
+  cor_school_year_semester as schoolYearSemester, -- ADDED THIS LINE
   cor_status as status,
   DATE_FORMAT(cor_date, '%m/%d/%Y') as date,
   cor_time as time,
@@ -118,14 +119,15 @@ router.get("/counseling-records", (req, res) => {
 router.get("/counseling-records/search", (req, res) => {
   const { query } = req.query;
   const searchTerm = `%${query}%`;
+  // UPDATED query to include schoolYearSemester in search
   const searchQuery = `
     SELECT ${counselingFields} 
     FROM tbl_counseling_records 
-    WHERE cor_student_name LIKE ? OR cor_student_id_number LIKE ? OR cor_student_strand LIKE ? OR cor_status LIKE ? OR cor_origin_medical_id LIKE ?
+    WHERE cor_student_name LIKE ? OR cor_student_id_number LIKE ? OR cor_student_strand LIKE ? OR cor_status LIKE ? OR cor_origin_medical_id LIKE ? OR cor_school_year_semester LIKE ?
     ORDER BY CAST(cor_record_id AS UNSIGNED) DESC
   `;
 
-  pool.query(searchQuery, [searchTerm, searchTerm, searchTerm, searchTerm, searchTerm], (err, results) => {
+  pool.query(searchQuery, [searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm], (err, results) => {
     handleCounselingResponse(res, err, results);
   });
 });
@@ -150,7 +152,7 @@ router.get("/counseling-records/:id", (req, res) => {
 
 router.post("/counseling-records", upload.array('attachments', 5), (req, res) => {
   const {
-    studentId, studentName, strand, gradeLevel, section, sessionNumber,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, sessionNumber, // ADDED schoolYearSemester
     status, date, time, concern, remarks, psychologicalCondition,
     originMedicalId, originCaseId
   } = req.body;
@@ -160,19 +162,22 @@ router.post("/counseling-records", upload.array('attachments', 5), (req, res) =>
   }
 
   const attachments = processFiles(req.files);
+  
+  // UPDATED query to include schoolYearSemester
   const query = `
     INSERT INTO tbl_counseling_records (
       cor_origin_medical_id, cor_origin_case_id, cor_student_id_number, cor_student_name,
-      cor_student_strand, cor_student_grade_level, cor_student_section, cor_session_number,
-      cor_status, cor_date, cor_time, cor_general_concern, cor_additional_remarks,
+      cor_student_strand, cor_student_grade_level, cor_student_section, cor_school_year_semester,
+      cor_session_number, cor_status, cor_date, cor_time, cor_general_concern, cor_additional_remarks,
       cor_attachments, cor_is_psychological_condition
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
+  // UPDATED values array to include schoolYearSemester
   const values = [
     originMedicalId || null, originCaseId || null, studentId, studentName,
-    strand, gradeLevel, section, sessionNumber, status, date || null,
-    time || null, concern, remarks || "", attachments, psychologicalCondition || "NO"
+    strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status, // ADDED schoolYearSemester
+    date || null, time || null, concern, remarks || "", attachments, psychologicalCondition || "NO"
   ];
 
   pool.query(query, values, (err, results) => {
@@ -184,16 +189,22 @@ router.post("/counseling-records", upload.array('attachments', 5), (req, res) =>
 router.put("/counseling-records/:id", upload.array('attachments', 5), (req, res) => {
   const recordId = req.params.id;
   const {
-    studentId, studentName, strand, gradeLevel, section, sessionNumber,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, sessionNumber,
     status, date, time, concern, remarks, psychologicalCondition,
     originMedicalId, originCaseId, existingAttachments, filesToDelete
   } = req.body;
+
+  console.log('PUT request for record:', recordId);
+  console.log('Request body:', req.body);
+  console.log('Files:', req.files);
 
   if (!studentId || !studentName || !strand || !gradeLevel || !section || !sessionNumber || !status || !concern) {
     return res.status(400).json({ success: false, message: "Missing required fields" });
   }
 
   let finalAttachments = [];
+  
+  // Parse existing attachments if provided
   if (existingAttachments) {
     try {
       const existingFiles = JSON.parse(existingAttachments);
@@ -204,20 +215,26 @@ router.put("/counseling-records/:id", upload.array('attachments', 5), (req, res)
     }
   }
 
+  // Add new files
   if (req.files && req.files.length > 0) {
-    finalAttachments = [...finalAttachments, ...req.files.map(file => ({
-      filename: file.filename, originalname: file.originalname,
-      mimetype: file.mimetype, size: file.size, path: file.path
-    }))];
+    const newFiles = req.files.map(file => ({
+      filename: file.filename,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      path: file.path
+    }));
+    finalAttachments = [...finalAttachments, ...newFiles];
   }
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
+  
   const query = `
     UPDATE tbl_counseling_records 
     SET 
       cor_origin_medical_id = ?, cor_origin_case_id = ?, cor_student_id_number = ?,
       cor_student_name = ?, cor_student_strand = ?, cor_student_grade_level = ?,
-      cor_student_section = ?, cor_session_number = ?, cor_status = ?,
+      cor_student_section = ?, cor_school_year_semester = ?, cor_session_number = ?, cor_status = ?,
       cor_date = ?, cor_time = ?, cor_general_concern = ?, cor_additional_remarks = ?,
       cor_attachments = ?, cor_is_psychological_condition = ?
     WHERE cor_record_id = ?
@@ -225,22 +242,33 @@ router.put("/counseling-records/:id", upload.array('attachments', 5), (req, res)
 
   const values = [
     originMedicalId || null, originCaseId || null, studentId, studentName,
-    strand, gradeLevel, section, sessionNumber, status, date || null,
-    time || null, concern, remarks || "", attachmentsJson, psychologicalCondition || "NO", recordId
+    strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status,
+    date || null, time || null, concern, remarks || "", attachmentsJson, psychologicalCondition || "NO", recordId
   ];
 
-  pool.query(query, values, (err, results) => {
-    if (err) return handleDatabaseError(err, req, res);
-    if (results.affectedRows === 0) return res.status(404).json({ success: false, message: "Counseling record not found" });
+  console.log('Update values:', values);
 
+  pool.query(query, values, (err, results) => {
+    if (err) {
+      console.error('Database update error:', err);
+      return handleDatabaseError(err, req, res);
+    }
+    
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Counseling record not found" });
+    }
+
+    // Delete files marked for removal
     if (filesToDelete) {
       const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
       filesToDeleteArray.forEach(filename => {
-        const filePath = path.join(__dirname, '../../uploads/counseling-records', filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlink(filePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
-          });
+        if (filename) {
+          const filePath = path.join(__dirname, '../../uploads/counseling-records', filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlink(filePath, (unlinkErr) => {
+              if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
+            });
+          }
         }
       });
     }
@@ -284,7 +312,7 @@ router.get("/counseling-records/:id/files/:filename", (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${file.originalname}"`);
     fs.createReadStream(file.path).pipe(res);
   });
-});
+}); 
 
 router.delete("/counseling-records/:id/files/:filename", (req, res) => {
   handleFileOperation(req, res, (req, res, file, attachmentsArray) => {
@@ -308,6 +336,21 @@ router.get("/infirmary/counseling-records", (req, res) => {
   });
 });
 
+router.get("/counseling-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  
+  const query = `
+    SELECT ${counselingFields}
+    FROM tbl_counseling_records 
+    WHERE cor_student_id_number = ?
+    ORDER BY CAST(cor_record_id AS UNSIGNED) DESC
+  `;
+
+  pool.query(query, [studentId], (err, results) => {
+    handleCounselingResponse(res, err, results);
+  });
+});
+
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -323,6 +366,27 @@ router.use((error, req, res, next) => {
   }
 
   next();
+});
+
+router.get("/counseling-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  const isPsychological = req.query.psychological === 'true';
+  
+  let query = `
+    SELECT ${counselingFields}
+    FROM tbl_counseling_records 
+    WHERE cor_student_id_number = ?
+  `;
+  
+  if (isPsychological) {
+    query += " AND cor_is_psychological_condition = 'YES'";
+  }
+  
+  query += " ORDER BY CAST(cor_record_id AS UNSIGNED) DESC";
+  
+  pool.query(query, [studentId], (err, results) => {
+    handleCounselingResponse(res, err, results);
+  });
 });
 
 module.exports = router;

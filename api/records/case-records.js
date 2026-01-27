@@ -23,9 +23,9 @@ const transporter = nodemailer.createTransport({
 
 // Department email mapping
 const departmentEmails = {
-  'OPD': 'alisakili7361@gmail.com',
-  'GCO': 'alisakili7361@gmail.com',
-  'INF': 'alisakili7361@gmail.com'
+  'OPD': 'opdadzu@gmail.com',
+  'GCO': 'gcoadzu@gmail.com',
+  'INF': 'infiadzu@gmail.com'
 };
 
 // Configure multer for file uploads
@@ -136,7 +136,7 @@ const createNotification = (studentName, studentId, violationLevel, caseId) => {
   });
 };
 
-const sendReferralEmail = (studentName, studentId, violationLevel, strand, gradeLevel, section, description, caseId, isUpdate = false) => {
+const sendReferralEmail = (studentName, studentId, violationLevel, strand, gradeLevel, section, schoolYearSemester, description, caseId, isUpdate = false) => {
   const emailSubject = isUpdate ? `Case Update - ${studentName} (${studentId})` : `New Case Referral - ${studentName} (${studentId})`;
   const actionText = isUpdate ? 'updated and referred' : 'referred';
   
@@ -146,6 +146,7 @@ const sendReferralEmail = (studentName, studentId, violationLevel, strand, grade
     <p><strong>Violation Level:</strong> ${violationLevel}</p>
     ${isUpdate ? `<p><strong>Status:</strong> ${description}</p>` : ''}
     <p><strong>Strand/Grade:</strong> ${strand} - Grade ${gradeLevel} ${section}</p>
+    <p><strong>School Year & Semester:</strong> ${schoolYearSemester}</p>
     <p><strong>Description:</strong> ${description}</p>
     <p><strong>Case ID:</strong> ${caseId}</p>
     <p>This case has been ${actionText} to GCO for further action.</p>
@@ -157,7 +158,7 @@ const sendReferralEmail = (studentName, studentId, violationLevel, strand, grade
     });
 };
 
-// Common field definitions
+// Common field definitions - UPDATED to include schoolYearSemester
 const caseFields = `
   cr_case_id as caseNo,
   cr_student_id as id,
@@ -165,6 +166,7 @@ const caseFields = `
   cr_student_strand as strand,
   cr_student_grade_level as gradeLevel,
   cr_student_section as section,
+  cr_school_year_semester as schoolYearSemester,
   cr_violation_level as violationLevel,
   cr_status as status,
   DATE_FORMAT(cr_case_date, '%m/%d/%Y') as date,
@@ -220,11 +222,11 @@ const handleFileOperation = (req, res, operation) => {
   });
 };
 
-// Common case record handler
+// Common case record handler - UPDATED to handle schoolYearSemester
 const handleCaseRecord = (req, res, isUpdate = false) => {
   const caseId = isUpdate ? req.params.id : null;
   const {
-    studentId, studentName, strand, gradeLevel, section,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
     violationLevel, status, description, remarks, referredToGCO,
     existingAttachments, filesToDelete
   } = req.body;
@@ -254,29 +256,31 @@ const handleCaseRecord = (req, res, isUpdate = false) => {
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
   const referralConfirmation = referredToGCO === "Yes" ? "Pending" : null;
 
+  // UPDATED queries to include schoolYearSemester
   const query = isUpdate ? `
     UPDATE tbl_case_records 
     SET 
       cr_student_id = ?, cr_student_name = ?, cr_student_strand = ?, 
-      cr_student_grade_level = ?, cr_student_section = ?, cr_violation_level = ?,
-      cr_status = ?, cr_referred = ?, cr_referral_confirmation = ?,
+      cr_student_grade_level = ?, cr_student_section = ?, cr_school_year_semester = ?,
+      cr_violation_level = ?, cr_status = ?, cr_referred = ?, cr_referral_confirmation = ?,
       cr_general_description = ?, cr_additional_remarks = ?, cr_attachments = ?
     WHERE cr_case_id = ?
   ` : `
     INSERT INTO tbl_case_records (
       cr_student_id, cr_student_name, cr_student_strand, cr_student_grade_level, 
-      cr_student_section, cr_violation_level, cr_status, cr_referred, 
+      cr_student_section, cr_school_year_semester, cr_violation_level, cr_status, cr_referred, 
       cr_referral_confirmation, cr_general_description, cr_additional_remarks,
       cr_attachments, cr_case_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
   `;
 
+  // UPDATED values arrays to include schoolYearSemester
   const values = isUpdate ? [
-    studentId, studentName, strand, gradeLevel, section,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
     violationLevel, status, referredToGCO, referralConfirmation,
     description, remarks, attachmentsJson, caseId
   ] : [
-    studentId, studentName, strand, gradeLevel, section,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
     violationLevel, status, referredToGCO, referralConfirmation,
     description, remarks, attachmentsJson
   ];
@@ -300,7 +304,7 @@ const handleCaseRecord = (req, res, isUpdate = false) => {
 
     if (referredToGCO === "Yes") {
       createNotification(studentName, studentId, violationLevel, recordId);
-      sendReferralEmail(studentName, studentId, violationLevel, strand, gradeLevel, section, description, recordId, isUpdate);
+      sendReferralEmail(studentName, studentId, violationLevel, strand, gradeLevel, section, schoolYearSemester, description, recordId, isUpdate);
     }
 
     res.json({
@@ -360,13 +364,14 @@ const handleSearch = (req, res, isReferred = false) => {
       cr_student_name LIKE ? OR 
       cr_student_strand LIKE ? OR
       cr_violation_level LIKE ? OR
-      cr_status LIKE ?
+      cr_status LIKE ? OR
+      cr_school_year_semester LIKE ?
     )
     ORDER BY CAST(cr_case_id AS UNSIGNED) DESC
   `;
 
   const searchPattern = `%${searchQuery}%`;
-  const searchTerms = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+  const searchTerms = [searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
   
   pool.query(query, searchTerms, (err, results) => {
     handleCaseResponse(res, err, results);
@@ -405,6 +410,21 @@ router.get("/case-records/:id", (req, res) => {
   });
 });
 
+router.get("/case-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  
+  const query = `
+    SELECT ${caseFields}
+    FROM tbl_case_records 
+    WHERE cr_student_id = ?
+    ORDER BY CAST(cr_case_id AS UNSIGNED) DESC
+  `;
+
+  pool.query(query, [studentId], (err, results) => {
+    handleCaseResponse(res, err, results);
+  });
+});
+
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
@@ -420,6 +440,27 @@ router.use((error, req, res, next) => {
   }
 
   next();
+});
+
+router.get("/case-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  const isReferred = req.query.referred === 'true';
+  
+  let query = `
+    SELECT ${caseFields}
+    FROM tbl_case_records 
+    WHERE cr_student_id = ?
+  `;
+  
+  if (isReferred) {
+    query += " AND cr_referred = 'Yes'";
+  }
+  
+  query += " ORDER BY CAST(cr_case_id AS UNSIGNED) DESC";
+  
+  pool.query(query, [studentId], (err, results) => {
+    handleCaseResponse(res, err, results);
+  });
 });
 
 module.exports = router;

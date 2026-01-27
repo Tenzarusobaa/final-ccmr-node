@@ -1,4 +1,4 @@
-// src/api/records/medical-records.js
+// root/api/records/medical-records.js
 const express = require("express");
 const router = express.Router();
 const multer = require('multer');
@@ -23,9 +23,9 @@ const transporter = nodemailer.createTransport({
 
 // Department email mapping (including INF)
 const departmentEmails = {
-  'OPD': 'alisakili7361@gmail.com',
-  'GCO': 'alisakili7361@gmail.com',
-  'INF': 'alisakili7361@gmail.com'
+  'OPD': 'opdadzu@gmail.com',
+  'GCO': 'gcoadzu@gmail.com',
+  'INF': 'infiadzu@gmail.com'
 };
 
 // Reusable utility functions
@@ -134,7 +134,7 @@ const createNotification = (studentName, studentId, conditionType, recordId, sen
 };
 
 // Send referral email function (similar to case-records but for medical)
-const sendReferralEmail = (studentName, studentId, conditionType, strand, gradeLevel, section, medicalDetails, recordId, isUpdate = false) => {
+const sendReferralEmail = (studentName, studentId, conditionType, strand, gradeLevel, section, schoolYearSemester, medicalDetails, recordId, isUpdate = false) => {
   const emailSubject = isUpdate ? `Medical Case Update - ${studentName} (${studentId})` : `New Medical Case Referral - ${studentName} (${studentId})`;
   const actionText = isUpdate ? 'updated and referred' : 'referred';
   
@@ -144,6 +144,7 @@ const sendReferralEmail = (studentName, studentId, conditionType, strand, gradeL
     <p><strong>Condition Type:</strong> ${conditionType}</p>
     ${isUpdate ? `<p><strong>Status:</strong> ${medicalDetails}</p>` : ''}
     <p><strong>Strand/Grade:</strong> ${strand} - Grade ${gradeLevel} ${section}</p>
+    <p><strong>School Year & Semester:</strong> ${schoolYearSemester}</p>
     <p><strong>Medical Details:</strong> ${medicalDetails}</p>
     <p><strong>Record ID:</strong> ${recordId}</p>
     <p>This medical case has been ${actionText} to GCO for further action.</p>
@@ -244,6 +245,7 @@ const medicalFields = `
   mr_status as status,
   mr_grade_level as gradeLevel,
   mr_section as section,
+  mr_school_year_semester as schoolYearSemester,
   mr_medical_details as medicalDetails,
   mr_additional_remarks as remarks,
   mr_attachments as attachments,
@@ -261,6 +263,7 @@ const infirmaryFields = `
   mr_student_strand as strand,
   mr_grade_level as gradeLevel,   
   mr_section as section,         
+  mr_school_year_semester as schoolYearSemester,
   mr_subject as subject,
   mr_status as status,
   mr_medical_details as medicalDetails,
@@ -310,10 +313,37 @@ const validateRecordId = (id) => {
   return null;
 };
 
+// Helper function to build WHERE clause for filters - FIXED
+const buildFilterClause = (filter, includeWhere = true) => {
+  let whereClause = includeWhere ? 'WHERE ' : '';
+  const conditions = [];
+  
+  if (filter !== 'ALL') {
+    if (filter === 'MEDICALPSYCHOLOGICAL') {
+      // Both Medical AND Psychological (strictly both)
+      conditions.push("mr_is_medical = 'Yes' AND mr_is_psychological = 'Yes'");
+    } else if (filter === 'MEDICAL') {
+      // Medical only (Medical = Yes, Psychological = No)
+      conditions.push("mr_is_medical = 'Yes' AND mr_is_psychological = 'No'");
+    } else if (filter === 'PSYCHOLOGICAL') {
+      // Psychological only (Medical = No, Psychological = Yes)
+      conditions.push("mr_is_medical = 'No' AND mr_is_psychological = 'Yes'");
+    }
+  }
+  
+  if (conditions.length > 0) {
+    whereClause += conditions.join(' AND ');
+  } else if (includeWhere) {
+    whereClause = '';
+  }
+  
+  return whereClause;
+};
+
 // Routes
 router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   const {
-    studentId, studentName, strand, gradeLevel, section, medicalDetails,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, medicalDetails,
     remarks, referredToGCO, isPsychological, isMedical, subject, status
   } = req.body;
 
@@ -336,13 +366,13 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   const query = `
     INSERT INTO tbl_medical_records (
       mr_student_id, mr_student_name, mr_student_strand, mr_grade_level, mr_section,
-      mr_subject, mr_status, mr_medical_details, mr_additional_remarks, mr_referred,
+      mr_school_year_semester, mr_subject, mr_status, mr_medical_details, mr_additional_remarks, mr_referred,
       mr_referral_confirmation, mr_is_psychological, mr_is_medical, mr_attachments, mr_record_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
   `;
 
   const values = [
-    studentId, studentName, strand, gradeLevel, section, subject, status,
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, subject, status,
     medicalDetails, remarks, referredToGCO, referralConfirmation,
     isPsychological, isMedical, attachments
   ];
@@ -387,7 +417,7 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
       createNotification(studentName, studentId, conditionType, results.insertId);
       
       // Send email notification
-      sendReferralEmail(studentName, studentId, conditionType, strand, gradeLevel, section, medicalDetails, results.insertId, false);
+      sendReferralEmail(studentName, studentId, conditionType, strand, gradeLevel, section, schoolYearSemester, medicalDetails, results.insertId, false);
     }
 
     res.json({
@@ -400,38 +430,92 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   });
 });
 
-// GET routes
+// GET routes - FIXED filter logic
 router.get("/infirmary/medical-records", (req, res) => {
-  pool.query(`SELECT ${infirmaryFields} FROM tbl_medical_records ORDER BY mr_record_date DESC`, (err, results) => {
+  const filter = req.query.filter || 'ALL';
+  const filterClause = buildFilterClause(filter, true);
+  
+  let query = `SELECT ${infirmaryFields} FROM tbl_medical_records`;
+  if (filterClause) {
+    query += ` ${filterClause}`;
+  }
+  query += ` ORDER BY mr_record_date DESC`;
+  
+  console.log('Executing query with filter:', filter, 'Query:', query);
+  
+  pool.query(query, (err, results) => {
     handleMedicalResponse(res, err, results);
   });
 });
 
 router.get("/medical-records/referred", (req, res) => {
-  pool.query(`SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_referred = 'Yes' ORDER BY mr_record_date DESC`, (err, results) => {
+  const filter = req.query.filter || 'ALL';
+  
+  let query = `SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_referred = 'Yes'`;
+  
+  // Add filter if specified
+  if (filter !== 'ALL') {
+    if (filter === 'MEDICALPSYCHOLOGICAL') {
+      query += " AND mr_is_medical = 'Yes' AND mr_is_psychological = 'Yes'";
+    } else if (filter === 'MEDICAL') {
+      query += " AND mr_is_medical = 'Yes' AND mr_is_psychological = 'No'";
+    } else if (filter === 'PSYCHOLOGICAL') {
+      query += " AND mr_is_medical = 'No' AND mr_is_psychological = 'Yes'";
+    }
+  }
+  
+  query += ` ORDER BY mr_record_date DESC`;
+  
+  console.log('Executing referred query with filter:', filter, 'Query:', query);
+  
+  pool.query(query, (err, results) => {
     handleMedicalResponse(res, err, results);
   });
 });
 
-const handleSearch = (req, res, query, searchTerms, isReferred = false) => {
+const handleSearch = (req, res, baseQuery, searchTerms, isReferred = false, filter = 'ALL') => {
   const searchError = validateSearchQuery(req.query.query);
   if (searchError) return res.status(400).json(searchError);
 
   const searchTerm = `%${escapeLike(req.query.query)}%`;
+  
+  let query = baseQuery;
+  
+  // Add filter conditions
+  if (filter !== 'ALL') {
+    const baseWhereIndex = query.indexOf('WHERE');
+    if (baseWhereIndex !== -1) {
+      if (filter === 'MEDICALPSYCHOLOGICAL') {
+        query = query.replace('WHERE', "WHERE (mr_is_medical = 'Yes' AND mr_is_psychological = 'Yes') AND");
+      } else if (filter === 'MEDICAL') {
+        query = query.replace('WHERE', "WHERE (mr_is_medical = 'Yes' AND mr_is_psychological = 'No') AND");
+      } else if (filter === 'PSYCHOLOGICAL') {
+        query = query.replace('WHERE', "WHERE (mr_is_medical = 'No' AND mr_is_psychological = 'Yes') AND");
+      }
+    }
+  }
+  
+  console.log('Executing search query with filter:', filter, 'Query:', query);
+  
   pool.query(query, searchTerms.map(() => searchTerm), (err, results) => {
     handleMedicalResponse(res, err, results);
   });
 };
 
 router.get("/medical-records/search", (req, res) => {
-  const query = `SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_student_name LIKE ? OR mr_student_id LIKE ? OR mr_medical_id LIKE ? ORDER BY mr_record_date DESC`;
-  handleSearch(req, res, query, [1, 1, 1]);
+  const filter = req.query.filter || 'ALL';
+  // Base query for search
+  const baseQuery = `SELECT ${medicalFields} FROM tbl_medical_records WHERE (mr_student_name LIKE ? OR mr_student_id LIKE ? OR mr_medical_id LIKE ? OR mr_school_year_semester LIKE ?) ORDER BY mr_record_date DESC`;
+  handleSearch(req, res, baseQuery, [1, 1, 1, 1], false, filter);
 });
 
 router.get("/medical-records/referred/search", (req, res) => {
-  const query = `SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_referred = 'Yes' AND (mr_student_name LIKE ? OR mr_student_id LIKE ? OR mr_medical_id LIKE ? OR mr_medical_details LIKE ?) ORDER BY mr_record_date DESC`;
-  handleSearch(req, res, query, [1, 1, 1, 1], true);
+  const filter = req.query.filter || 'ALL';
+  // Base query for referred search
+  const baseQuery = `SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_referred = 'Yes' AND (mr_student_name LIKE ? OR mr_student_id LIKE ? OR mr_medical_id LIKE ? OR mr_medical_details LIKE ? OR mr_school_year_semester LIKE ?) ORDER BY mr_record_date DESC`;
+  handleSearch(req, res, baseQuery, [1, 1, 1, 1, 1], true, filter);
 });
+
 
 router.get("/medical-records/:id", (req, res) => {
   const recordId = req.params.id;
@@ -452,31 +536,36 @@ router.get("/medical-records/:id", (req, res) => {
   });
 });
 
+// PUT endpoint
 router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) => {
   const recordId = req.params.id;
-  const validationError = validateRecordId(recordId);
-  if (validationError) return res.status(400).json(validationError);
-
   const {
-    studentId, studentName, strand, gradeLevel, section, medicalDetails,
-    remarks, referredToGCO, isPsychological, isMedical, existingAttachments, filesToDelete,
-    subject, status // ADDED: Include subject and status from request body
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, subject,
+    status, medicalDetails, remarks, referredToGCO, isPsychological, isMedical,
+    existingAttachments, filesToDelete, fileClassifications
   } = req.body;
 
-  const requiredError = validateRequiredFields(studentId, studentName);
-  if (requiredError) return res.status(400).json(requiredError);
+  console.log('PUT request for medical record:', recordId);
 
-  // Extract file classifications from request body for new files
-  const fileClassifications = [];
-  if (req.body.fileClassifications) {
-    if (Array.isArray(req.body.fileClassifications)) {
-      fileClassifications.push(...req.body.fileClassifications);
-    } else {
-      fileClassifications.push(req.body.fileClassifications);
-    }
+  // Validate required fields
+  if (!studentId || !studentName || !subject || !status || !medicalDetails || !isPsychological || !isMedical) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Missing required fields" 
+    });
+  }
+
+  // Validate that at least one is "Yes"
+  if (isPsychological === 'No' && isMedical === 'No') {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Record cannot be neither medical nor psychological" 
+    });
   }
 
   let finalAttachments = [];
+  
+  // Parse existing attachments if provided
   if (existingAttachments) {
     try {
       const existingFiles = JSON.parse(existingAttachments);
@@ -487,28 +576,19 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
     }
   }
 
-  // Process new files with classifications
+  // Add new files
   if (req.files && req.files.length > 0) {
-    const newFilesWithClassification = req.files.map((file, index) => {
-      // Find classification for this file
-      const classificationData = fileClassifications.find(classification => {
-        try {
-          const parsed = JSON.parse(classification);
-          return parsed.filename === file.originalname;
-        } catch (e) {
-          return false;
-        }
-      });
-      
-      let classification = { isMedical: false, isPsychological: false };
-      if (classificationData) {
-        try {
-          classification = JSON.parse(classificationData);
-        } catch (e) {
-          console.error('Error parsing file classification:', e);
-        }
+    let classifications = [];
+    try {
+      if (fileClassifications) {
+        classifications = JSON.parse(fileClassifications);
       }
+    } catch (e) {
+      console.error('Error parsing file classifications:', e);
+    }
 
+    const newFiles = req.files.map(file => {
+      const classification = classifications.find(c => c.filename === file.originalname) || {};
       return {
         filename: file.filename,
         originalname: file.originalname,
@@ -519,78 +599,76 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
         isPsychological: classification.isPsychological || false
       };
     });
-
-    // Send OPD notification for new files with classification
-    newFilesWithClassification.forEach(file => {
-      sendOPDFileNotification(studentName, studentId, file.originalname, recordId, {
-        isMedical: file.isMedical,
-        isPsychological: file.isPsychological
-      })
-        .then(emailSent => {
-          console.log(emailSent ? 
-            `OPD file notification sent for ${file.originalname}` : 
-            `Failed to send OPD file notification for ${file.originalname}`
-          );
-        });
-    });
-
-    finalAttachments = [...finalAttachments, ...newFilesWithClassification];
+    
+    finalAttachments = [...finalAttachments, ...newFiles];
   }
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
-  const referralConfirmation = referredToGCO === "Yes" ? "Pending" : null;
-
-  // FIXED: Updated query to include subject and status fields
+  
   const query = `
     UPDATE tbl_medical_records 
     SET 
-      mr_student_id = ?, mr_student_name = ?, mr_student_strand = ?, mr_grade_level = ?, mr_section = ?,
-      mr_subject = ?, mr_status = ?, mr_medical_details = ?, mr_additional_remarks = ?, 
-      mr_referred = ?, mr_referral_confirmation = ?, mr_is_psychological = ?, mr_is_medical = ?, 
+      mr_student_id = ?,
+      mr_student_name = ?,
+      mr_student_strand = ?,
+      mr_grade_level = ?,
+      mr_section = ?,
+      mr_school_year_semester = ?,
+      mr_subject = ?,
+      mr_status = ?,
+      mr_medical_details = ?,
+      mr_additional_remarks = ?,
+      mr_referred = ?,
+      mr_is_psychological = ?,
+      mr_is_medical = ?,
       mr_attachments = ?
     WHERE mr_medical_id = ?
   `;
 
-  // FIXED: Updated values array to include subject and status
   const values = [
-    studentId, studentName, strand, gradeLevel, section, 
-    subject, status, medicalDetails, remarks, 
-    referredToGCO, referralConfirmation, isPsychological, isMedical, 
-    attachmentsJson, recordId
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester || null,
+    subject, status, medicalDetails, remarks || "", referredToGCO || "No",
+    isPsychological, isMedical, attachmentsJson, recordId
   ];
 
-  pool.query(query, values, (err, results) => {
-    if (err) return handleDatabaseError(err, req, res);
-    if (results.affectedRows === 0) return res.status(404).json({ success: false, error: "Medical record not found" });
+  console.log('Executing update query with values:', values);
 
+  pool.query(query, values, (err, results) => {
+    if (err) {
+      console.error('Database update error:', err);
+      return res.status(500).json({ 
+        success: false, 
+        error: "Database operation failed",
+        message: err.message 
+      });
+    }
+    
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Medical record not found" 
+      });
+    }
+
+    // Delete files marked for removal
     if (filesToDelete) {
       const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
       filesToDeleteArray.forEach(filename => {
-        const filePath = path.join(__dirname, '../../uploads/medical-records', filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlink(filePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
-          });
+        if (filename) {
+          const filePath = path.join(__dirname, '../../uploads/medical-records', filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlink(filePath, (unlinkErr) => {
+              if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
+            });
+          }
         }
       });
     }
 
-    // Send notification and email if referred to GCO
-    if (referredToGCO === "Yes") {
-      const conditionType = isPsychological === "Yes" ? "Psychological" : "Medical";
-      
-      // Create notification in database
-      createNotification(studentName, studentId, conditionType, recordId);
-      
-      // Send email notification
-      sendReferralEmail(studentName, studentId, conditionType, strand, gradeLevel, section, medicalDetails, recordId, true);
-    }
-
-    res.json({
-      success: true,
+    res.json({ 
+      success: true, 
       message: "Medical record updated successfully",
-      affectedRows: results.affectedRows,
-      fileCount: req.files ? req.files.length : 0
+      recordId: recordId
     });
   });
 });
@@ -632,6 +710,34 @@ router.get("/medical-records/:id/files/:filename", (req, res) => {
   });
 });
 
+router.get("/medical-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  const filter = req.query.filter || 'ALL';
+  
+  let query = `
+    SELECT ${medicalFields}
+    FROM tbl_medical_records 
+    WHERE mr_student_id = ?
+  `;
+  
+  // Add filter if specified
+  if (filter !== 'ALL') {
+    if (filter === 'MEDICALPSYCHOLOGICAL') {
+      query += " AND mr_is_medical = 'Yes' AND mr_is_psychological = 'Yes'";
+    } else if (filter === 'MEDICAL') {
+      query += " AND mr_is_medical = 'Yes' AND mr_is_psychological = 'No'";
+    } else if (filter === 'PSYCHOLOGICAL') {
+      query += " AND mr_is_medical = 'No' AND mr_is_psychological = 'Yes'";
+    }
+  }
+  
+  query += " ORDER BY mr_record_date DESC";
+
+  pool.query(query, [studentId], (err, results) => {
+    handleMedicalResponse(res, err, results);
+  });
+});
+
 router.delete("/medical-records/:id/files/:filename", (req, res) => {
   handleFileOperation(req, res, (req, res, file, attachmentsArray) => {
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
@@ -663,6 +769,27 @@ router.use((error, req, res, next) => {
   }
 
   next();
+});
+
+router.get("/medical-records/student/:studentId", (req, res) => {
+  const studentId = req.params.studentId;
+  const isReferred = req.query.referred === 'true';
+  
+  let query = `
+    SELECT ${medicalFields}
+    FROM tbl_medical_records 
+    WHERE mr_student_id = ?
+  `;
+  
+  if (isReferred) {
+    query += " AND mr_referred = 'Yes'";
+  }
+  
+  query += " ORDER BY mr_record_date DESC";
+  
+  pool.query(query, [studentId], (err, results) => {
+    handleMedicalResponse(res, err, results);
+  });
 });
 
 module.exports = router;
