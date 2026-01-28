@@ -40,7 +40,7 @@ const processFiles = (files, fileClassifications = []) => {
         return false;
       }
     });
-    
+
     let classification = { isMedical: false, isPsychological: false };
     if (classificationData) {
       try {
@@ -49,7 +49,7 @@ const processFiles = (files, fileClassifications = []) => {
         console.error('Error parsing file classification:', e);
       }
     }
-    
+
     return {
       filename: file.filename,
       originalname: file.originalname,
@@ -124,7 +124,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
 // Create notification function (same as case-records)
 const createNotification = (studentName, studentId, conditionType, recordId, sender = 'INF', receiver = 'GCO') => {
   const notificationMessage = `New ${conditionType.toLowerCase()} referral for ${studentName} (${studentId})`;
-  
+
   pool.query(`
     INSERT INTO tbl_notifications (n_sender, n_receiver, n_type, n_message, n_related_record_id, n_related_record_type)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -137,7 +137,7 @@ const createNotification = (studentName, studentId, conditionType, recordId, sen
 const sendReferralEmail = (studentName, studentId, conditionType, strand, gradeLevel, section, schoolYearSemester, medicalDetails, recordId, isUpdate = false) => {
   const emailSubject = isUpdate ? `Medical Case Update - ${studentName} (${studentId})` : `New Medical Case Referral - ${studentName} (${studentId})`;
   const actionText = isUpdate ? 'updated and referred' : 'referred';
-  
+
   const emailMessage = `
     <h3>${isUpdate ? 'Medical Case Update' : 'New Medical Case Referral'} Notification</h3>
     <p><strong>Student:</strong> ${studentName} (${studentId})</p>
@@ -317,7 +317,7 @@ const validateRecordId = (id) => {
 const buildFilterClause = (filter, includeWhere = true) => {
   let whereClause = includeWhere ? 'WHERE ' : '';
   const conditions = [];
-  
+
   if (filter !== 'ALL') {
     if (filter === 'MEDICALPSYCHOLOGICAL') {
       // Both Medical AND Psychological (strictly both)
@@ -330,13 +330,13 @@ const buildFilterClause = (filter, includeWhere = true) => {
       conditions.push("mr_is_medical = 'No' AND mr_is_psychological = 'Yes'");
     }
   }
-  
+
   if (conditions.length > 0) {
     whereClause += conditions.join(' AND ');
   } else if (includeWhere) {
     whereClause = '';
   }
-  
+
   return whereClause;
 };
 
@@ -392,7 +392,7 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
             return false;
           }
         }) || '{}';
-        
+
         let classification = { isMedical: false, isPsychological: false };
         try {
           classification = JSON.parse(fileClassification);
@@ -402,8 +402,8 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
 
         sendOPDFileNotification(studentName, studentId, file.originalname, results.insertId, classification)
           .then(emailSent => {
-            console.log(emailSent ? 
-              `OPD file notification sent for ${file.originalname}` : 
+            console.log(emailSent ?
+              `OPD file notification sent for ${file.originalname}` :
               `Failed to send OPD file notification for ${file.originalname}`
             );
           });
@@ -412,10 +412,10 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
 
     if (referredToGCO === "Yes") {
       const conditionType = isPsychological === "Yes" ? "Psychological" : "Medical";
-      
+
       // Create notification in database
       createNotification(studentName, studentId, conditionType, results.insertId);
-      
+
       // Send email notification
       sendReferralEmail(studentName, studentId, conditionType, strand, gradeLevel, section, schoolYearSemester, medicalDetails, results.insertId, false);
     }
@@ -434,15 +434,15 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
 router.get("/infirmary/medical-records", (req, res) => {
   const filter = req.query.filter || 'ALL';
   const filterClause = buildFilterClause(filter, true);
-  
+
   let query = `SELECT ${infirmaryFields} FROM tbl_medical_records`;
   if (filterClause) {
     query += ` ${filterClause}`;
   }
   query += ` ORDER BY mr_record_date DESC`;
-  
+
   console.log('Executing query with filter:', filter, 'Query:', query);
-  
+
   pool.query(query, (err, results) => {
     handleMedicalResponse(res, err, results);
   });
@@ -450,9 +450,9 @@ router.get("/infirmary/medical-records", (req, res) => {
 
 router.get("/medical-records/referred", (req, res) => {
   const filter = req.query.filter || 'ALL';
-  
+
   let query = `SELECT ${medicalFields} FROM tbl_medical_records WHERE mr_referred = 'Yes'`;
-  
+
   // Add filter if specified
   if (filter !== 'ALL') {
     if (filter === 'MEDICALPSYCHOLOGICAL') {
@@ -463,11 +463,28 @@ router.get("/medical-records/referred", (req, res) => {
       query += " AND mr_is_medical = 'No' AND mr_is_psychological = 'Yes'";
     }
   }
-  
+
   query += ` ORDER BY mr_record_date DESC`;
-  
+
   console.log('Executing referred query with filter:', filter, 'Query:', query);
-  
+
+  pool.query(query, (err, results) => {
+    handleMedicalResponse(res, err, results);
+  });
+});
+
+router.get("/medical-records", (req, res) => {
+  const filter = req.query.filter || 'ALL';
+  const filterClause = buildFilterClause(filter, true);
+
+  let query = `SELECT ${medicalFields} FROM tbl_medical_records`;
+  if (filterClause) {
+    query += ` ${filterClause}`;
+  }
+  query += ` ORDER BY mr_record_date DESC`;
+
+  console.log('Executing all medical records query with filter:', filter, 'Query:', query);
+
   pool.query(query, (err, results) => {
     handleMedicalResponse(res, err, results);
   });
@@ -478,9 +495,9 @@ const handleSearch = (req, res, baseQuery, searchTerms, isReferred = false, filt
   if (searchError) return res.status(400).json(searchError);
 
   const searchTerm = `%${escapeLike(req.query.query)}%`;
-  
+
   let query = baseQuery;
-  
+
   // Add filter conditions
   if (filter !== 'ALL') {
     const baseWhereIndex = query.indexOf('WHERE');
@@ -494,9 +511,9 @@ const handleSearch = (req, res, baseQuery, searchTerms, isReferred = false, filt
       }
     }
   }
-  
+
   console.log('Executing search query with filter:', filter, 'Query:', query);
-  
+
   pool.query(query, searchTerms.map(() => searchTerm), (err, results) => {
     handleMedicalResponse(res, err, results);
   });
@@ -549,22 +566,22 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
 
   // Validate required fields
   if (!studentId || !studentName || !subject || !status || !medicalDetails || !isPsychological || !isMedical) {
-    return res.status(400).json({ 
-      success: false, 
-      message: "Missing required fields" 
+    return res.status(400).json({
+      success: false,
+      message: "Missing required fields"
     });
   }
 
   // Validate that at least one is "Yes"
   if (isPsychological === 'No' && isMedical === 'No') {
-    return res.status(400).json({ 
-      success: false, 
-      message: "Record cannot be neither medical nor psychological" 
+    return res.status(400).json({
+      success: false,
+      message: "Record cannot be neither medical nor psychological"
     });
   }
 
   let finalAttachments = [];
-  
+
   // Parse existing attachments if provided
   if (existingAttachments) {
     try {
@@ -599,12 +616,12 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
         isPsychological: classification.isPsychological || false
       };
     });
-    
+
     finalAttachments = [...finalAttachments, ...newFiles];
   }
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
-  
+
   const query = `
     UPDATE tbl_medical_records 
     SET 
@@ -636,17 +653,17 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
   pool.query(query, values, (err, results) => {
     if (err) {
       console.error('Database update error:', err);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         error: "Database operation failed",
-        message: err.message 
+        message: err.message
       });
     }
-    
+
     if (results.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Medical record not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Medical record not found"
       });
     }
 
@@ -665,8 +682,8 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: "Medical record updated successfully",
       recordId: recordId
     });
@@ -713,13 +730,13 @@ router.get("/medical-records/:id/files/:filename", (req, res) => {
 router.get("/medical-records/student/:studentId", (req, res) => {
   const studentId = req.params.studentId;
   const filter = req.query.filter || 'ALL';
-  
+
   let query = `
     SELECT ${medicalFields}
     FROM tbl_medical_records 
     WHERE mr_student_id = ?
   `;
-  
+
   // Add filter if specified
   if (filter !== 'ALL') {
     if (filter === 'MEDICALPSYCHOLOGICAL') {
@@ -730,7 +747,7 @@ router.get("/medical-records/student/:studentId", (req, res) => {
       query += " AND mr_is_medical = 'No' AND mr_is_psychological = 'Yes'";
     }
   }
-  
+
   query += " ORDER BY mr_record_date DESC";
 
   pool.query(query, [studentId], (err, results) => {
@@ -774,19 +791,19 @@ router.use((error, req, res, next) => {
 router.get("/medical-records/student/:studentId", (req, res) => {
   const studentId = req.params.studentId;
   const isReferred = req.query.referred === 'true';
-  
+
   let query = `
     SELECT ${medicalFields}
     FROM tbl_medical_records 
     WHERE mr_student_id = ?
   `;
-  
+
   if (isReferred) {
     query += " AND mr_referred = 'Yes'";
   }
-  
+
   query += " ORDER BY mr_record_date DESC";
-  
+
   pool.query(query, [studentId], (err, results) => {
     handleMedicalResponse(res, err, results);
   });
