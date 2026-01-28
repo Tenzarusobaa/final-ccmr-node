@@ -29,7 +29,7 @@ const departmentEmails = {
 };
 
 // Reusable utility functions
-const processFiles = (files, fileClassifications = []) => {
+const processFiles = (files, fileClassifications = [], uploaderType = 'INF') => {
   return files && files.length > 0 ? JSON.stringify(files.map((file, index) => {
     // Find classification for this file
     const classificationData = fileClassifications.find(classification => {
@@ -57,7 +57,9 @@ const processFiles = (files, fileClassifications = []) => {
       size: file.size,
       path: file.path,
       isMedical: classification.isMedical || false,
-      isPsychological: classification.isPsychological || false
+      isPsychological: classification.isPsychological || false,
+      uploadedBy: uploaderType, // Add uploader info
+      uploadDate: new Date().toISOString()
     };
   })) : null;
 };
@@ -156,8 +158,8 @@ const sendReferralEmail = (studentName, studentId, conditionType, strand, gradeL
     });
 };
 
-// NEW: OPD File Notification Function
-const sendOPDFileNotification = async (studentName, studentId, fileName, recordId, fileClassification = {}) => {
+// OPD File Notification Function
+const sendOPDFileNotification = async (studentName, studentId, fileName, recordId, fileClassification = {}, uploaderType = 'INF') => {
   try {
     const toEmail = departmentEmails['OPD'];
     if (!toEmail) {
@@ -173,17 +175,20 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     const mailOptions = {
       from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
       to: toEmail,
-      subject: `OPD Added Certificate - ${studentName} (${studentId})`,
+      subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-            OPD Certificate Upload Notification
+            ${uploaderType} Certificate Upload Notification
           </h2>
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #003A6C; margin-top: 0;">OPD Added Certificate</h3>
+            <h3 style="color: ${uploaderType === 'OPD' ? '#003A6C' : uploaderType === 'GCO' ? '#00451D' : '#640C17'}; margin-top: 0;">
+              ${uploaderType} Added Certificate
+            </h3>
             <p><strong>Student:</strong> ${studentName} (${studentId})</p>
             <p><strong>File Name:</strong> ${fileName}</p>
             <p><strong>File Classification:</strong> ${classificationDisplay}</p>
+            <p><strong>Uploaded By:</strong> ${uploaderType} Department</p>
             <p><strong>Record ID:</strong> ${recordId}</p>
             <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
             <p>A new certificate/file has been uploaded to the medical record system.</p>
@@ -197,10 +202,10 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`OPD file notification sent: ${info.messageId}`);
+    console.log(`${uploaderType} file notification sent: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error('Error sending OPD file notification:', error);
+    console.error(`Error sending ${uploaderType} file notification:`, error);
     return false;
   }
 };
@@ -216,7 +221,25 @@ const storage = multer.diskStorage({
     const fileExtension = path.extname(file.originalname);
     const fileNameWithoutExt = path.basename(file.originalname, fileExtension);
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `${fileNameWithoutExt}-${uniqueSuffix}${fileExtension}`);
+    
+    // Get uploader type from request
+    const uploaderType = req.headers['x-uploader-type'] || 
+                        req.body.uploaderType || 
+                        'INF'; // Default to INF if not specified
+    
+    // Store uploader info in the request for later use
+    req.uploaderType = uploaderType;
+    
+    // Apply prefix based on uploader type
+    let prefix = '';
+    if (uploaderType === 'OPD') {
+      prefix = 'OPDMC_'; // OPD Medical Certificate
+    } else if (uploaderType === 'GCO') {
+      prefix = 'GCO_'; // GCO uploads
+    }
+    // INF uploads don't need a prefix
+    
+    cb(null, `${prefix}${fileNameWithoutExt}-${uniqueSuffix}${fileExtension}`);
   }
 });
 
@@ -344,7 +367,8 @@ const buildFilterClause = (filter, includeWhere = true) => {
 router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   const {
     studentId, studentName, strand, gradeLevel, section, schoolYearSemester, medicalDetails,
-    remarks, referredToGCO, isPsychological, isMedical, subject, status
+    remarks, referredToGCO, isPsychological, isMedical, subject, status,
+    uploaderType = 'INF' // Get uploader type from request body
   } = req.body;
 
   const validationError = validateRequiredFields(studentId, studentName);
@@ -360,8 +384,10 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
     }
   }
 
-  const attachments = processFiles(req.files, fileClassifications);
-  const referralConfirmation = referredToGCO === "Yes" ? "Pending" : null;
+  // Use the uploader type from the request (stored by multer)
+  const actualUploaderType = req.uploaderType || uploaderType || 'INF';
+  const attachments = processFiles(req.files, fileClassifications, actualUploaderType);
+  const referralConfirmation = "Pending";
 
   const query = `
     INSERT INTO tbl_medical_records (
@@ -400,11 +426,11 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
           console.error('Error parsing file classification for notification:', e);
         }
 
-        sendOPDFileNotification(studentName, studentId, file.originalname, results.insertId, classification)
+        sendOPDFileNotification(studentName, studentId, file.originalname, results.insertId, classification, actualUploaderType)
           .then(emailSent => {
             console.log(emailSent ?
-              `OPD file notification sent for ${file.originalname}` :
-              `Failed to send OPD file notification for ${file.originalname}`
+              `${actualUploaderType} file notification sent for ${file.originalname}` :
+              `Failed to send ${actualUploaderType} file notification for ${file.originalname}`
             );
           });
       });
@@ -559,10 +585,12 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
   const {
     studentId, studentName, strand, gradeLevel, section, schoolYearSemester, subject,
     status, medicalDetails, remarks, referredToGCO, isPsychological, isMedical,
-    existingAttachments, filesToDelete, fileClassifications
+    existingAttachments, filesToDelete, fileClassifications,
+    uploaderType = 'INF' // Get uploader type from request body
   } = req.body;
 
   console.log('PUT request for medical record:', recordId);
+  console.log('Uploader type:', uploaderType);
 
   // Validate required fields
   if (!studentId || !studentName || !subject || !status || !medicalDetails || !isPsychological || !isMedical) {
@@ -604,6 +632,9 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
       console.error('Error parsing file classifications:', e);
     }
 
+    // Use the uploader type from the request (stored by multer)
+    const actualUploaderType = req.uploaderType || uploaderType || 'INF';
+    
     const newFiles = req.files.map(file => {
       const classification = classifications.find(c => c.filename === file.originalname) || {};
       return {
@@ -613,7 +644,9 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
         size: file.size,
         path: file.path,
         isMedical: classification.isMedical || false,
-        isPsychological: classification.isPsychological || false
+        isPsychological: classification.isPsychological || false,
+        uploadedBy: actualUploaderType, // Store who uploaded it
+        uploadDate: new Date().toISOString()
       };
     });
 
@@ -806,6 +839,57 @@ router.get("/medical-records/student/:studentId", (req, res) => {
 
   pool.query(query, [studentId], (err, results) => {
     handleMedicalResponse(res, err, results);
+  });
+});
+
+router.get("/medical-records/opd-uploads", (req, res) => {
+  const query = `
+    SELECT 
+      mr.mr_medical_id as recordId,
+      mr.mr_student_id as studentId,
+      mr.mr_student_name as studentName,
+      mr.mr_attachments as attachments
+    FROM tbl_medical_records mr
+    WHERE mr.mr_attachments IS NOT NULL
+    ORDER BY mr.mr_record_date DESC
+  `;
+
+  pool.query(query, (err, results) => {
+    if (err) {
+      console.error("Error fetching OPD uploads:", err);
+      return res.status(500).json({ error: "Database query failed", message: err.message });
+    }
+
+    // Parse attachments and filter OPD uploads
+    const opdUploads = [];
+    
+    results.forEach(record => {
+      if (record.attachments) {
+        try {
+          const attachmentsArray = JSON.parse(record.attachments);
+          attachmentsArray.forEach(file => {
+            if (file.uploadedBy === 'OPD') {
+              opdUploads.push({
+                recordId: record.recordId,
+                studentId: record.studentId,
+                studentName: record.studentName,
+                fileName: file.originalname,
+                uploadedDate: file.uploadDate,
+                fileData: file
+              });
+            }
+          });
+        } catch (parseError) {
+          console.error("Error parsing attachments:", parseError);
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      uploads: opdUploads,
+      count: opdUploads.length
+    });
   });
 });
 
