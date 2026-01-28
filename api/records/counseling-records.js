@@ -111,7 +111,28 @@ const handleCounselingResponse = (res, err, results, successMessage = '') => {
 
 // Routes
 router.get("/counseling-records", (req, res) => {
-  pool.query(`SELECT ${counselingFields} FROM tbl_counseling_records ORDER BY CAST(cor_record_id AS UNSIGNED) DESC`, (err, results) => {
+  const filter = req.query.filter || null;
+  
+  let query = `SELECT ${counselingFields} FROM tbl_counseling_records`;
+  
+  if (filter) {
+    switch(filter.toUpperCase()) {
+      case 'TO_SCHEDULE':
+        query += " WHERE cor_status = 'TO SCHEDULE'";
+        break;
+      case 'SCHEDULED':
+        query += " WHERE cor_status = 'SCHEDULED'";
+        break;
+      case 'DONE':
+        query += " WHERE cor_status = 'DONE'";
+        break;
+      // Add other filters as needed
+    }
+  }
+  
+  query += " ORDER BY CAST(cor_record_id AS UNSIGNED) DESC";
+  
+  pool.query(query, (err, results) => {
     handleCounselingResponse(res, err, results);
   });
 });

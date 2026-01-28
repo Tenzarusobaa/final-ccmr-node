@@ -379,7 +379,28 @@ const handleSearch = (req, res, isReferred = false) => {
 };
 
 router.get("/case-records", (req, res) => {
-  pool.query(`SELECT ${caseFields} FROM tbl_case_records ORDER BY CAST(cr_case_id AS UNSIGNED) DESC`, (err, results) => {
+  const filter = req.query.filter || null;
+  
+  let query = `SELECT ${caseFields} FROM tbl_case_records`;
+  
+  if (filter) {
+    switch(filter.toUpperCase()) {
+      case 'MINOR':
+        query += " WHERE cr_violation_level = 'Minor'";
+        break;
+      case 'MAJOR':
+        query += " WHERE cr_violation_level = 'Major'";
+        break;
+      case 'SERIOUS':
+        query += " WHERE cr_violation_level = 'Serious'";
+        break;
+      // Add other filters as needed
+    }
+  }
+  
+  query += " ORDER BY CAST(cr_case_id AS UNSIGNED) DESC";
+  
+  pool.query(query, (err, results) => {
     handleCaseResponse(res, err, results);
   });
 });
