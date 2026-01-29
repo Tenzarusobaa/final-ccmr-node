@@ -15,7 +15,7 @@ const transporter = nodemailer.createTransport({
   port: 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+    user: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
     pass: process.env.EMAIL_PASS || 'dbai xvib tmgg lldf'
   },
   tls: { rejectUnauthorized: false }
@@ -95,7 +95,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
     }
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: subject,
       html: `
@@ -110,7 +110,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
             <p>This is an automated notification from the CCMR.</p>
             <p>Please do not reply to this email.</p>
           </div>
-        </div>
+        </div>  
       `
     };
 
@@ -132,6 +132,18 @@ const createNotification = (studentName, studentId, conditionType, recordId, sen
     VALUES (?, ?, ?, ?, ?, ?)
   `, [sender, receiver, 'Referral', notificationMessage, recordId, 'medical_record'], (notifErr) => {
     if (notifErr) console.error("Error creating notification:", notifErr);
+  });
+};
+
+// Create notification for file upload
+const createFileUploadNotification = (studentName, studentId, fileName, recordId, sender = 'OPD', receiver = 'INF') => {
+  const notificationMessage = `${sender} uploaded file "${fileName}" for ${studentName} (${studentId})`;
+
+  pool.query(`
+    INSERT INTO tbl_notifications (n_sender, n_receiver, n_type, n_message, n_related_record_id, n_related_record_type)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [sender, receiver, 'File Upload', notificationMessage, recordId, 'medical_record'], (notifErr) => {
+    if (notifErr) console.error("Error creating file upload notification:", notifErr);
   });
 };
 
@@ -173,7 +185,7 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
@@ -206,6 +218,58 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     return true;
   } catch (error) {
     console.error(`Error sending ${uploaderType} file notification:`, error);
+    return false;
+  }
+};
+
+// INF File Notification Function (when OPD uploads files)
+const sendINFFileNotification = async (studentName, studentId, fileName, recordId, fileClassification = {}, uploaderType = 'OPD') => {
+  try {
+    const toEmail = departmentEmails['INF'];
+    if (!toEmail) {
+      console.error('No email found for INF department');
+      return false;
+    }
+
+    const classificationText = [];
+    if (fileClassification.isMedical) classificationText.push('Medical');
+    if (fileClassification.isPsychological) classificationText.push('Psychological');
+    const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
+      to: toEmail,
+      subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+            ${uploaderType} Certificate Upload Notification
+          </h2>
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: ${uploaderType === 'OPD' ? '#003A6C' : uploaderType === 'GCO' ? '#00451D' : '#640C17'}; margin-top: 0;">
+              ${uploaderType} Added Certificate
+            </h3>
+            <p><strong>Student:</strong> ${studentName} (${studentId})</p>
+            <p><strong>File Name:</strong> ${fileName}</p>
+            <p><strong>File Classification:</strong> ${classificationDisplay}</p>
+            <p><strong>Uploaded By:</strong> ${uploaderType} Department</p>
+            <p><strong>Record ID:</strong> ${recordId}</p>
+            <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+            <p>A new certificate/file has been uploaded to the medical record system.</p>
+          </div>
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #7f8c8d;">
+            <p>This is an automated notification from the CCMR System.</p>
+            <p>Please do not reply to this email.</p>
+          </div>
+        </div>
+      `
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`${uploaderType} file notification sent to INF: ${info.messageId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error sending ${uploaderType} file notification to INF:`, error);
     return false;
   }
 };
@@ -406,7 +470,7 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   pool.query(query, values, (err, results) => {
     if (err) return handleDatabaseError(err, req, res);
 
-    // Send OPD notification for each uploaded file with classification
+    // Send notifications for each uploaded file with classification
     if (req.files && req.files.length > 0) {
       req.files.forEach((file, index) => {
         // Find classification for this file
@@ -426,13 +490,31 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
           console.error('Error parsing file classification for notification:', e);
         }
 
-        sendOPDFileNotification(studentName, studentId, file.originalname, results.insertId, classification, actualUploaderType)
-          .then(emailSent => {
-            console.log(emailSent ?
-              `${actualUploaderType} file notification sent for ${file.originalname}` :
-              `Failed to send ${actualUploaderType} file notification for ${file.originalname}`
-            );
-          });
+        // Always send OPD notification (if applicable)
+        if (actualUploaderType === 'OPD' || actualUploaderType === 'INF' || actualUploaderType === 'GCO') {
+          sendOPDFileNotification(studentName, studentId, file.originalname, results.insertId, classification, actualUploaderType)
+            .then(emailSent => {
+              console.log(emailSent ?
+                `${actualUploaderType} file notification sent for ${file.originalname}` :
+                `Failed to send ${actualUploaderType} file notification for ${file.originalname}`
+              );
+            });
+        }
+
+        // If uploaded by OPD, send notification to INF
+        if (actualUploaderType === 'OPD') {
+          // Send email to INF
+          sendINFFileNotification(studentName, studentId, file.originalname, results.insertId, classification, actualUploaderType)
+            .then(emailSent => {
+              console.log(emailSent ?
+                `OPD file notification sent to INF for ${file.originalname}` :
+                `Failed to send OPD file notification to INF for ${file.originalname}`
+              );
+            });
+
+          // Create notification in database for INF
+          createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'INF');
+        }
       });
     }
 
@@ -579,7 +661,7 @@ router.get("/medical-records/:id", (req, res) => {
   });
 });
 
-// PUT endpoint
+// PUT endpoint - UPDATED to handle file classifications properly
 router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) => {
   const recordId = req.params.id;
   const {
@@ -591,6 +673,7 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
 
   console.log('PUT request for medical record:', recordId);
   console.log('Uploader type:', uploaderType);
+  console.log('File classifications received:', fileClassifications);
 
   // Validate required fields
   if (!studentId || !studentName || !subject || !status || !medicalDetails || !isPsychological || !isMedical) {
@@ -609,13 +692,37 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
   }
 
   let finalAttachments = [];
+  let parsedFileClassifications = [];
+
+  // Parse file classifications
+  if (fileClassifications) {
+    try {
+      parsedFileClassifications = JSON.parse(fileClassifications);
+      console.log('Parsed file classifications:', parsedFileClassifications);
+    } catch (e) {
+      console.error('Error parsing file classifications:', e);
+    }
+  }
 
   // Parse existing attachments if provided
   if (existingAttachments) {
     try {
       const existingFiles = JSON.parse(existingAttachments);
       const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : (filesToDelete ? [filesToDelete] : []);
-      finalAttachments = existingFiles.filter(file => !filesToDeleteArray.includes(file.filename));
+      
+      // Update existing files with new classifications
+      finalAttachments = existingFiles.map(file => {
+        const fileName = file.originalname || file.filename;
+        const classification = parsedFileClassifications.find(c => c.filename === fileName) || {};
+        
+        return {
+          ...file,
+          isMedical: classification.isMedical || file.isMedical || false,
+          isPsychological: classification.isPsychological || file.isPsychological || false
+        };
+      }).filter(file => !filesToDeleteArray.includes(file.filename));
+      
+      console.log('Updated existing files with classifications:', finalAttachments);
     } catch (e) {
       console.error('Error parsing existing attachments:', e);
     }
@@ -623,20 +730,11 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
 
   // Add new files
   if (req.files && req.files.length > 0) {
-    let classifications = [];
-    try {
-      if (fileClassifications) {
-        classifications = JSON.parse(fileClassifications);
-      }
-    } catch (e) {
-      console.error('Error parsing file classifications:', e);
-    }
-
     // Use the uploader type from the request (stored by multer)
     const actualUploaderType = req.uploaderType || uploaderType || 'INF';
     
     const newFiles = req.files.map(file => {
-      const classification = classifications.find(c => c.filename === file.originalname) || {};
+      const classification = parsedFileClassifications.find(c => c.filename === file.originalname) || {};
       return {
         filename: file.filename,
         originalname: file.originalname,
@@ -651,6 +749,40 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
     });
 
     finalAttachments = [...finalAttachments, ...newFiles];
+
+    // Send notifications for newly uploaded files
+    if (actualUploaderType === 'OPD') {
+      newFiles.forEach(file => {
+        // Send email to INF
+        sendINFFileNotification(studentName, studentId, file.originalname, recordId, 
+          { isMedical: file.isMedical, isPsychological: file.isPsychological }, 
+          actualUploaderType)
+          .then(emailSent => {
+            console.log(emailSent ?
+              `OPD file notification sent to INF for ${file.originalname}` :
+              `Failed to send OPD file notification to INF for ${file.originalname}`
+            );
+          });
+
+        // Create notification in database for INF
+        createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'INF');
+      });
+    }
+
+    // Also send OPD notification for OPD uploads
+    if (actualUploaderType === 'OPD' || actualUploaderType === 'INF' || actualUploaderType === 'GCO') {
+      newFiles.forEach(file => {
+        sendOPDFileNotification(studentName, studentId, file.originalname, recordId, 
+          { isMedical: file.isMedical, isPsychological: file.isPsychological }, 
+          actualUploaderType)
+          .then(emailSent => {
+            console.log(emailSent ?
+              `${actualUploaderType} file notification sent for ${file.originalname}` :
+              `Failed to send ${actualUploaderType} file notification for ${file.originalname}`
+            );
+          });
+      });
+    }
   }
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;

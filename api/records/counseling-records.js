@@ -79,10 +79,11 @@ const counselingFields = `
   cor_student_strand as strand,
   cor_student_grade_level as gradeLevel,
   cor_student_section as section,
-  cor_school_year_semester as schoolYearSemester, -- ADDED THIS LINE
+  cor_school_year_semester as schoolYearSemester,
   cor_status as status,
   DATE_FORMAT(cor_date, '%m/%d/%Y') as date,
-  cor_time as time,
+  -- FORMAT TIME AS HH:MM (remove seconds and milliseconds)
+  TIME_FORMAT(cor_time, '%H:%i') as time,
   cor_general_concern as concern,
   cor_additional_remarks as remarks,
   cor_attachments as attachments,

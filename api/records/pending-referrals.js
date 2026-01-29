@@ -283,7 +283,7 @@ router.put("/pending-referrals/case-record/:recordId/confirm", (req, res) => {
         caseData.cr_student_section,
         caseData.cr_school_year_semester || null, // ADDED THIS VALUE
         'TO SCHEDULE',
-        caseData.cr_general_description,
+        '',
         'UNCONFIRMED'
       ];
 
@@ -450,7 +450,7 @@ router.put("/pending-referrals/medical-record/:recordId/confirm", (req, res) => 
         medicalData.mr_section,
         medicalData.mr_school_year_semester || null, // ADDED THIS VALUE
         'TO SCHEDULE',
-        medicalData.mr_medical_details,
+        '',
         medicalData.mr_is_psychological === 'Yes' ? 'YES' : 'NO'
       ];
 
