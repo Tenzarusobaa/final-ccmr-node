@@ -15,7 +15,7 @@ const transporter = nodemailer.createTransport({
   port: 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+    user: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
     pass: process.env.EMAIL_PASS || 'dbai xvib tmgg lldf'
   },
   tls: { rejectUnauthorized: false }
@@ -25,7 +25,7 @@ const transporter = nodemailer.createTransport({
 const departmentEmails = {
   'OPD': 'opdadzu@gmail.com',
   'GCO': 'gcoadzu@gmail.com',
-  'INF': 'infiadzu@gmail.com'
+  'INF': 'alisakili7361@gmail.com'
 };
 
 // Reusable utility functions
@@ -95,7 +95,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
     }
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: subject,
       html: `
@@ -192,7 +192,7 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
@@ -244,7 +244,7 @@ const sendINFFileNotification = async (studentName, studentId, fileName, recordI
     const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
