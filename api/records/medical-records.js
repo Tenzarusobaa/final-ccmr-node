@@ -149,13 +149,13 @@ const createFileUploadNotification = (studentName, studentId, fileName, recordId
 };
 
 // NEW: Send email notification to INF when OPD uploads a file
-const sendOPDFileUploadEmailToINF = async (studentName, studentId, fileName, recordId, fileClassification = {}) => {
-  try {
-    const toEmail = departmentEmails['INF'];
-    if (!toEmail) {
-      console.error('No email found for INF department');
-      return false;
-    }
+  const sendOPDFileUploadEmailToINF = async (studentName, studentId, fileName, recordId, fileClassification = {}) => {
+    try {
+      const toEmail = 'alisakili7361@gmail.com';
+      if (!toEmail) {
+        console.error('No email found for INF department');
+        return false;
+      }
 
     const classificationText = [];
     if (fileClassification.isMedical) classificationText.push('Medical');
