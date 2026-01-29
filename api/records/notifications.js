@@ -7,8 +7,8 @@ router.get("/test", (req, res) => {
   res.json({ message: "Notifications router is working!" });
 });
 
-// Get notifications for specific receiver - CHANGE THIS LINE
-router.get("/", (req, res) => {  // Remove "/notifications" from here
+// Get notifications for specific receiver
+router.get("/", (req, res) => {
   const { receiver } = req.query;
 
   if (!receiver) {
@@ -50,8 +50,52 @@ router.get("/", (req, res) => {  // Remove "/notifications" from here
   });
 });
 
-// Mark notification as read - CHANGE THIS LINE
-router.put("/:id/read", (req, res) => {  // Remove "/notifications" from here
+// Get OPD Medical Certificate notifications specifically
+router.get("/opd-certificates", (req, res) => {
+  const { receiver } = req.query;
+
+  if (!receiver) {
+    return res.status(400).json({
+      error: "Receiver parameter is required",
+    });
+  }
+
+  const query = `
+    SELECT 
+      n_id,
+      n_sender,
+      n_receiver,
+      n_type,
+      n_message,
+      n_is_read,
+      n_created_at,
+      n_related_record_id,
+      n_related_record_type
+    FROM tbl_notifications 
+    WHERE n_receiver = ? 
+    AND n_type = 'OPD Medical Certificate'
+    ORDER BY n_created_at DESC
+  `;
+
+  pool.query(query, [receiver], (err, results) => {
+    if (err) {
+      console.error("Error fetching OPD certificate notifications:", err);
+      return res.status(500).json({
+        error: "Database query failed",
+        message: err.message,
+      });
+    }
+
+    res.json({
+      success: true,
+      notifications: results,
+      count: results.length,
+    });
+  });
+});
+
+// Mark notification as read
+router.put("/:id/read", (req, res) => {
   const { id } = req.params;
 
   const query = `
@@ -82,8 +126,8 @@ router.put("/:id/read", (req, res) => {  // Remove "/notifications" from here
   });
 });
 
-// Mark all notifications as read for a receiver - CHANGE THIS LINE
-router.put("/mark-all-read", (req, res) => {  // Remove "/notifications" from here
+// Mark all notifications as read for a receiver
+router.put("/mark-all-read", (req, res) => {
   const { receiver } = req.body;
 
   if (!receiver) {
@@ -111,6 +155,54 @@ router.put("/mark-all-read", (req, res) => {  // Remove "/notifications" from he
       success: true,
       message: `${results.affectedRows} notifications marked as read`,
       affectedRows: results.affectedRows,
+    });
+  });
+});
+
+// Get unread notification count
+router.get("/unread-count", (req, res) => {
+  const { receiver } = req.query;
+
+  if (!receiver) {
+    return res.status(400).json({
+      error: "Receiver parameter is required",
+    });
+  }
+
+  const query = `
+    SELECT 
+      COUNT(*) as count,
+      n_type,
+      COUNT(CASE WHEN n_type = 'OPD Medical Certificate' THEN 1 END) as opd_certificate_count
+    FROM tbl_notifications 
+    WHERE n_receiver = ? AND n_is_read = 'No'
+    GROUP BY n_type
+  `;
+
+  pool.query(query, [receiver], (err, results) => {
+    if (err) {
+      console.error("Error fetching unread count:", err);
+      return res.status(500).json({
+        error: "Database query failed",
+        message: err.message,
+      });
+    }
+
+    let totalCount = 0;
+    let opdCertificateCount = 0;
+    
+    results.forEach(row => {
+      totalCount += row.count;
+      if (row.n_type === 'OPD Medical Certificate') {
+        opdCertificateCount = row.opd_certificate_count;
+      }
+    });
+
+    res.json({
+      success: true,
+      total: totalCount,
+      opdCertificates: opdCertificateCount,
+      breakdown: results
     });
   });
 });

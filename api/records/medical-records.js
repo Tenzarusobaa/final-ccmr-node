@@ -135,15 +135,22 @@ const createNotification = (studentName, studentId, conditionType, recordId, sen
   });
 };
 
-// Create notification for file upload
+// Create notification for file upload - UPDATED
 const createFileUploadNotification = (studentName, studentId, fileName, recordId, sender = 'OPD', receiver = 'INF') => {
+  // Determine notification type based on sender
+  let notificationType = 'Update'; // Default type
+  if (sender === 'OPD') {
+    notificationType = 'OPD Medical Certificate';
+  }
+
   const notificationMessage = `${sender} uploaded file "${fileName}" for ${studentName} (${studentId})`;
 
   pool.query(`
     INSERT INTO tbl_notifications (n_sender, n_receiver, n_type, n_message, n_related_record_id, n_related_record_type)
     VALUES (?, ?, ?, ?, ?, ?)
-  `, [sender, receiver, 'File Upload', notificationMessage, recordId, 'medical_record'], (notifErr) => {
+  `, [sender, receiver, notificationType, notificationMessage, recordId, 'medical_record'], (notifErr) => {
     if (notifErr) console.error("Error creating file upload notification:", notifErr);
+    else console.log(`Notification created: ${notificationType} from ${sender} to ${receiver}`);
   });
 };
 
@@ -514,6 +521,9 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
 
           // Create notification in database for INF
           createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'INF');
+          
+          // Also create a notification for OPD (for their own records)
+          createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'OPD');
         }
       });
     }
@@ -641,7 +651,6 @@ router.get("/medical-records/referred/search", (req, res) => {
   handleSearch(req, res, baseQuery, [1, 1, 1, 1, 1], true, filter);
 });
 
-
 router.get("/medical-records/:id", (req, res) => {
   const recordId = req.params.id;
   const validationError = validateRecordId(recordId);
@@ -766,6 +775,9 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
 
         // Create notification in database for INF
         createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'INF');
+        
+        // Also create a notification for OPD
+        createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'OPD');
       });
     }
 
@@ -932,6 +944,45 @@ router.delete("/medical-records/:id/files/:filename", (req, res) => {
         return res.status(500).json({ error: "Database update failed" });
       }
       res.json({ success: true, message: "File deleted successfully" });
+    });
+  });
+});
+
+// Get OPD Medical Certificate notifications for INF
+router.get("/notifications/opd-certificates", (req, res) => {
+  const receiver = req.query.receiver || 'INF';
+  
+  const query = `
+    SELECT 
+      n_id,
+      n_sender,
+      n_receiver,
+      n_type,
+      n_message,
+      n_is_read,
+      n_created_at,
+      n_related_record_id,
+      n_related_record_type
+    FROM tbl_notifications 
+    WHERE n_receiver = ? 
+    AND n_type = 'OPD Medical Certificate'
+    AND n_sender = 'OPD'
+    ORDER BY n_created_at DESC
+  `;
+
+  pool.query(query, [receiver], (err, results) => {
+    if (err) {
+      console.error("Error fetching OPD certificate notifications:", err);
+      return res.status(500).json({ 
+        error: "Database query failed", 
+        message: err.message 
+      });
+    }
+
+    res.json({
+      success: true,
+      notifications: results,
+      count: results.length,
     });
   });
 });

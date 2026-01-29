@@ -22,9 +22,9 @@ const transporter = nodemailer.createTransport({
 
 // Department email mapping
 const departmentEmails = {
-  'OPD': 'alisakili7361@gmail.com',
-  'GCO': 'alisakili7361@gmail.com',
-  'INF': 'alisakili7361@gmail.com'
+  'OPD': 'opdadzu@gmail.com',
+  'GCO': 'gcoadzu@gmail.com',
+  'INF': 'infiadzu@gmail.com'
 };
 
 // Function to send email notification
