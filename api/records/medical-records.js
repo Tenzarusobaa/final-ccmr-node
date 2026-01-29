@@ -25,7 +25,7 @@ const transporter = nodemailer.createTransport({
 const departmentEmails = {
   'OPD': 'opdadzu@gmail.com',
   'GCO': 'gcoadzu@gmail.com',
-  'INF': 'infiadzu@gmail.com'
+  'INF': 'alisakili7361@gmail.com'
 };
 
 // Reusable utility functions
