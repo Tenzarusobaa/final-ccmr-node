@@ -95,7 +95,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
     }
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
+      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
       to: toEmail,
       subject: subject,
       html: `
@@ -136,68 +136,22 @@ const createNotification = (studentName, studentId, conditionType, recordId, sen
 };
 
 // Create notification for file upload - UPDATED
-const createFileUploadNotification = (studentName, studentId, fileName, recordId, sender = 'OPD', receiver = 'INF', notificationType = 'Update') => {
-  const notificationMessage = `OPD Uploaded a File "${fileName}" for ${studentName} (${studentId})`;
+const createFileUploadNotification = (studentName, studentId, fileName, recordId, sender = 'OPD', receiver = 'INF') => {
+  // Determine notification type based on sender
+  let notificationType = 'Update'; // Default type
+  if (sender === 'OPD') {
+    notificationType = 'OPD Medical Certificate';
+  }
+
+  const notificationMessage = `${sender} uploaded file "${fileName}" for ${studentName} (${studentId})`;
 
   pool.query(`
     INSERT INTO tbl_notifications (n_sender, n_receiver, n_type, n_message, n_related_record_id, n_related_record_type)
     VALUES (?, ?, ?, ?, ?, ?)
   `, [sender, receiver, notificationType, notificationMessage, recordId, 'medical_record'], (notifErr) => {
     if (notifErr) console.error("Error creating file upload notification:", notifErr);
-    else console.log(`Notification created: ${notificationType} from ${sender} to ${receiver} - ${notificationMessage}`);
+    else console.log(`Notification created: ${notificationType} from ${sender} to ${receiver}`);
   });
-};
-
-// NEW: Send email notification to INF when OPD uploads a file
-const sendOPDFileUploadEmailToINF = async (studentName, studentId, fileName, recordId, fileClassification = {}) => {
-  try {
-    const toEmail = departmentEmails['INF'];
-    if (!toEmail) {
-      console.error('No email found for INF department');
-      return false;
-    }
-
-    const classificationText = [];
-    if (fileClassification.isMedical) classificationText.push('Medical');
-    if (fileClassification.isPsychological) classificationText.push('Psychological');
-    const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
-      to: toEmail,
-      subject: `OPD Uploaded File - ${studentName} (${studentId})`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
-            OPD File Upload Notification
-          </h2>
-          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-            <h3 style="color: #003A6C; margin-top: 0;">
-              OPD Uploaded a File
-            </h3>
-            <p><strong>Student:</strong> ${studentName} (${studentId})</p>
-            <p><strong>File Name:</strong> ${fileName}</p>
-            <p><strong>File Classification:</strong> ${classificationDisplay}</p>
-            <p><strong>Uploaded By:</strong> OPD Department</p>
-            <p><strong>Record ID:</strong> ${recordId}</p>
-            <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
-            <p>OPD has uploaded a new file to the medical record system.</p>
-          </div>
-          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #7f8c8d;">
-            <p>This is an automated notification from the CCMR System.</p>
-            <p>Please do not reply to this email.</p>
-          </div>
-        </div>
-      `
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`OPD file upload email sent to INF: ${info.messageId}`);
-    return true;
-  } catch (error) {
-    console.error('Error sending OPD file upload email to INF:', error);
-    return false;
-  }
 };
 
 // Send referral email function (similar to case-records but for medical)
@@ -238,7 +192,7 @@ const sendOPDFileNotification = async (studentName, studentId, fileName, recordI
     const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
+      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
       to: toEmail,
       subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
@@ -290,7 +244,7 @@ const sendINFFileNotification = async (studentName, studentId, fileName, recordI
     const classificationDisplay = classificationText.length > 0 ? classificationText.join(' & ') : 'Unclassified';
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
+      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
       to: toEmail,
       subject: `${uploaderType} Added Certificate - ${studentName} (${studentId})`,
       html: `
@@ -557,16 +511,19 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
         // If uploaded by OPD, send notification to INF
         if (actualUploaderType === 'OPD') {
           // Send email to INF
-          sendOPDFileUploadEmailToINF(studentName, studentId, file.originalname, results.insertId, classification)
+          sendINFFileNotification(studentName, studentId, file.originalname, results.insertId, classification, actualUploaderType)
             .then(emailSent => {
               console.log(emailSent ?
-                `OPD file upload email sent to INF for ${file.originalname}` :
-                `Failed to send OPD file upload email to INF for ${file.originalname}`
+                `OPD file notification sent to INF for ${file.originalname}` :
+                `Failed to send OPD file notification to INF for ${file.originalname}`
               );
             });
 
-          // Create notification in database for INF with type "Update" and message "OPD Uploaded a File"
-          createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'INF', 'Update');
+          // Create notification in database for INF
+          createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'INF');
+          
+          // Also create a notification for OPD (for their own records)
+          createFileUploadNotification(studentName, studentId, file.originalname, results.insertId, 'OPD', 'OPD');
         }
       });
     }
@@ -806,17 +763,21 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
     if (actualUploaderType === 'OPD') {
       newFiles.forEach(file => {
         // Send email to INF
-        sendOPDFileUploadEmailToINF(studentName, studentId, file.originalname, recordId, 
-          { isMedical: file.isMedical, isPsychological: file.isPsychological })
+        sendINFFileNotification(studentName, studentId, file.originalname, recordId, 
+          { isMedical: file.isMedical, isPsychological: file.isPsychological }, 
+          actualUploaderType)
           .then(emailSent => {
             console.log(emailSent ?
-              `OPD file upload email sent to INF for ${file.originalname}` :
-              `Failed to send OPD file upload email to INF for ${file.originalname}`
+              `OPD file notification sent to INF for ${file.originalname}` :
+              `Failed to send OPD file notification to INF for ${file.originalname}`
             );
           });
 
-        // Create notification in database for INF with type "Update" and message "OPD Uploaded a File"
-        createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'INF', 'Update');
+        // Create notification in database for INF
+        createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'INF');
+        
+        // Also create a notification for OPD
+        createFileUploadNotification(studentName, studentId, file.originalname, recordId, 'OPD', 'OPD');
       });
     }
 
