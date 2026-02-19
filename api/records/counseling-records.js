@@ -8,6 +8,18 @@ const fs = require('fs');
 // Import database connection from centralized config
 const { pool } = require("../../config/database");
 
+// Helper function to add edit history
+const addEditHistory = (currentHistory, userType) => {
+  const history = currentHistory ? JSON.parse(currentHistory) : [];
+  const newEntry = {
+    editedBy: userType,
+    editedAt: new Date().toISOString(),
+    timestamp: Date.now()
+  };
+  history.push(newEntry);
+  return JSON.stringify(history);
+};
+
 // Reusable functions from case-records (can be moved to shared utils)
 const processFiles = (files) => {
   return files && files.length > 0 ? JSON.stringify(files.map(file => ({
@@ -68,7 +80,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-// Common query fields - UPDATED to include schoolYearSemester
+// Common query fields - UPDATED to include create_date and edit_history
 const counselingFields = `
   cor_record_id as recordId,
   cor_origin_medical_id as originMedicalId,
@@ -82,12 +94,13 @@ const counselingFields = `
   cor_school_year_semester as schoolYearSemester,
   cor_status as status,
   DATE_FORMAT(cor_date, '%m/%d/%Y') as date,
-  -- FORMAT TIME AS HH:MM (remove seconds and milliseconds)
   TIME_FORMAT(cor_time, '%H:%i') as time,
   cor_general_concern as concern,
   cor_additional_remarks as remarks,
   cor_attachments as attachments,
-  cor_is_psychological_condition as psychologicalCondition
+  cor_is_psychological_condition as psychologicalCondition,
+  cor_create_date as createDate,
+  cor_edit_history as editDate
 `;
 
 // Common response handler
@@ -102,7 +115,8 @@ const handleCounselingResponse = (res, err, results, successMessage = '') => {
 
   const recordsWithAttachments = results.map(record => ({
     ...record,
-    attachments: record.attachments ? JSON.parse(record.attachments) : []
+    attachments: record.attachments ? JSON.parse(record.attachments) : [],
+    editDate: record.editDate ? JSON.parse(record.editDate) : []
   }));
 
   const response = { success: true, records: recordsWithAttachments, count: results.length };
@@ -127,7 +141,6 @@ router.get("/counseling-records", (req, res) => {
       case 'DONE':
         query += " WHERE cor_status = 'DONE'";
         break;
-      // Add other filters as needed
     }
   }
   
@@ -141,7 +154,6 @@ router.get("/counseling-records", (req, res) => {
 router.get("/counseling-records/search", (req, res) => {
   const { query } = req.query;
   const searchTerm = `%${query}%`;
-  // UPDATED query to include schoolYearSemester in search
   const searchQuery = `
     SELECT ${counselingFields} 
     FROM tbl_counseling_records 
@@ -168,13 +180,14 @@ router.get("/counseling-records/:id", (req, res) => {
 
     const record = results[0];
     record.attachments = record.attachments ? JSON.parse(record.attachments) : [];
+    record.editDate = record.editDate ? JSON.parse(record.editDate) : [];
     res.json({ success: true, record });
   });
 });
 
 router.post("/counseling-records", upload.array('attachments', 5), (req, res) => {
   const {
-    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, sessionNumber, // ADDED schoolYearSemester
+    studentId, studentName, strand, gradeLevel, section, schoolYearSemester, sessionNumber,
     status, date, time, concern, remarks, psychologicalCondition,
     originMedicalId, originCaseId
   } = req.body;
@@ -185,21 +198,21 @@ router.post("/counseling-records", upload.array('attachments', 5), (req, res) =>
 
   const attachments = processFiles(req.files);
   
-  // UPDATED query to include schoolYearSemester
+  // UPDATED query to include create_date and edit_history
   const query = `
     INSERT INTO tbl_counseling_records (
       cor_origin_medical_id, cor_origin_case_id, cor_student_id_number, cor_student_name,
       cor_student_strand, cor_student_grade_level, cor_student_section, cor_school_year_semester,
       cor_session_number, cor_status, cor_date, cor_time, cor_general_concern, cor_additional_remarks,
-      cor_attachments, cor_is_psychological_condition
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      cor_attachments, cor_is_psychological_condition, cor_create_date, cor_edit_history
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
   `;
 
-  // UPDATED values array to include schoolYearSemester
   const values = [
     originMedicalId || null, originCaseId || null, studentId, studentName,
-    strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status, // ADDED schoolYearSemester
-    date || null, time || null, concern, remarks || "", attachments, psychologicalCondition || "NO"
+    strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status,
+    date || null, time || null, concern, remarks || "", attachments, psychologicalCondition || "NO",
+    '[]'
   ];
 
   pool.query(query, values, (err, results) => {
@@ -215,6 +228,9 @@ router.put("/counseling-records/:id", upload.array('attachments', 5), (req, res)
     status, date, time, concern, remarks, psychologicalCondition,
     originMedicalId, originCaseId, existingAttachments, filesToDelete
   } = req.body;
+
+  // Get user type from request
+  const userType = req.body.userType || 'GCO';
 
   console.log('PUT request for record:', recordId);
   console.log('Request body:', req.body);
@@ -251,51 +267,63 @@ router.put("/counseling-records/:id", upload.array('attachments', 5), (req, res)
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
   
-  const query = `
-    UPDATE tbl_counseling_records 
-    SET 
-      cor_origin_medical_id = ?, cor_origin_case_id = ?, cor_student_id_number = ?,
-      cor_student_name = ?, cor_student_strand = ?, cor_student_grade_level = ?,
-      cor_student_section = ?, cor_school_year_semester = ?, cor_session_number = ?, cor_status = ?,
-      cor_date = ?, cor_time = ?, cor_general_concern = ?, cor_additional_remarks = ?,
-      cor_attachments = ?, cor_is_psychological_condition = ?
-    WHERE cor_record_id = ?
-  `;
-
-  const values = [
-    originMedicalId || null, originCaseId || null, studentId, studentName,
-    strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status,
-    date || null, time || null, concern, remarks || "", attachmentsJson, psychologicalCondition || "NO", recordId
-  ];
-
-  console.log('Update values:', values);
-
-  pool.query(query, values, (err, results) => {
-    if (err) {
-      console.error('Database update error:', err);
-      return handleDatabaseError(err, req, res);
+  // First, get current edit history
+  pool.query(`SELECT cor_edit_history FROM tbl_counseling_records WHERE cor_record_id = ?`, [recordId], (selectErr, selectResults) => {
+    if (selectErr) {
+      console.error("Error fetching edit history:", selectErr);
+      return handleDatabaseError(selectErr, req, res);
     }
     
-    if (results.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Counseling record not found" });
-    }
+    const currentHistory = selectResults[0]?.cor_edit_history || '[]';
+    const updatedHistory = addEditHistory(currentHistory, userType);
+    
+    const query = `
+      UPDATE tbl_counseling_records 
+      SET 
+        cor_origin_medical_id = ?, cor_origin_case_id = ?, cor_student_id_number = ?,
+        cor_student_name = ?, cor_student_strand = ?, cor_student_grade_level = ?,
+        cor_student_section = ?, cor_school_year_semester = ?, cor_session_number = ?, cor_status = ?,
+        cor_date = ?, cor_time = ?, cor_general_concern = ?, cor_additional_remarks = ?,
+        cor_attachments = ?, cor_is_psychological_condition = ?, cor_edit_history = ?
+      WHERE cor_record_id = ?
+    `;
 
-    // Delete files marked for removal
-    if (filesToDelete) {
-      const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
-      filesToDeleteArray.forEach(filename => {
-        if (filename) {
-          const filePath = path.join(__dirname, '../../uploads/counseling-records', filename);
-          if (fs.existsSync(filePath)) {
-            fs.unlink(filePath, (unlinkErr) => {
-              if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
-            });
+    const values = [
+      originMedicalId || null, originCaseId || null, studentId, studentName,
+      strand, gradeLevel, section, schoolYearSemester || null, sessionNumber, status,
+      date || null, time || null, concern, remarks || "", attachmentsJson, psychologicalCondition || "NO",
+      updatedHistory, recordId
+    ];
+
+    console.log('Update values:', values);
+
+    pool.query(query, values, (err, results) => {
+      if (err) {
+        console.error('Database update error:', err);
+        return handleDatabaseError(err, req, res);
+      }
+      
+      if (results.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: "Counseling record not found" });
+      }
+
+      // Delete files marked for removal
+      if (filesToDelete) {
+        const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
+        filesToDeleteArray.forEach(filename => {
+          if (filename) {
+            const filePath = path.join(__dirname, '../../uploads/counseling-records', filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlink(filePath, (unlinkErr) => {
+                if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
+              });
+            }
           }
-        }
-      });
-    }
+        });
+      }
 
-    res.json({ success: true, message: "Counseling record updated successfully" });
+      res.json({ success: true, message: "Counseling record updated successfully" });
+    });
   });
 });
 

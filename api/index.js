@@ -1,5 +1,5 @@
 // root/api/index.js
-require('dotenv').config(); // Add this at the top
+require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -18,6 +18,7 @@ const studentDataRoutes = require("./records/student-records");
 const notificationsRoutes = require("./records/notifications");
 const aggregateRecordsRoutes = require("./records/aggregate-records");
 const usersRoutes = require("./records/users");
+const medicalCertificatesRoutes = require("./records/medical-certificates");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,7 +28,7 @@ app.use(bodyParser.json());
 
 // Test endpoint to check database connection and view login data
 app.get("/test/login-data", (req, res) => {
-  pool.query("SELECT * FROM users", (err, results) => {
+  pool.query("SELECT u_email, u_username, u_name, u_department, u_type, u_status, created_at, deactivated_at FROM users", (err, results) => {
     if (err) {
       console.error("Error querying database:", err);
       return res.status(500).json({ 
@@ -40,6 +41,30 @@ app.get("/test/login-data", (req, res) => {
       message: "Database connection successful!",
       userCount: results.length,
       users: results
+    });
+  });
+});
+
+// Test endpoint to check user status
+app.get("/test/user-status", (req, res) => {
+  pool.query(`
+    SELECT 
+      u_status,
+      COUNT(*) as count
+    FROM users 
+    GROUP BY u_status
+  `, (err, results) => {
+    if (err) {
+      console.error("Error querying database:", err);
+      return res.status(500).json({ 
+        error: "Database query failed",
+        message: err.message 
+      });
+    }
+
+    res.json({
+      message: "User status summary",
+      statusBreakdown: results
     });
   });
 });
@@ -168,10 +193,13 @@ app.use("/api", studentDataRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api", aggregateRecordsRoutes);
 app.use("/api", usersRoutes);
+app.use("/api", medicalCertificatesRoutes);
 
 app.listen(PORT, () => {
   console.log(`Port: http://localhost:${PORT}`);
   console.log(`Test values for login: http://localhost:${PORT}/test/login-data`);
+  console.log(`Test user status: http://localhost:${PORT}/test/user-status`);
   console.log(`Case records endpoint: http://localhost:${PORT}/api/case-records`);
   console.log(`Notifications endpoint: http://localhost:${PORT}/api/notifications`);
+  console.log(`User stats endpoint: http://localhost:${PORT}/api/users/stats/summary`);
 });

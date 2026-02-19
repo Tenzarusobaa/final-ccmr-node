@@ -25,7 +25,19 @@ const transporter = nodemailer.createTransport({
 const departmentEmails = {
   'OPD': 'opdadzu@gmail.com',
   'GCO': 'gcoadzu@gmail.com',
-  'INF': 'alisakili7361@gmail.com'
+  'INF': 'infiadzu@gmail.com'
+};
+
+// Helper function to add edit history
+const addEditHistory = (currentHistory, userType) => {
+  const history = currentHistory ? JSON.parse(currentHistory) : [];
+  const newEntry = {
+    editedBy: userType,
+    editedAt: new Date().toISOString(),
+    timestamp: Date.now()
+  };
+  history.push(newEntry);
+  return JSON.stringify(history);
 };
 
 // Reusable utility functions
@@ -329,7 +341,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-// Common field definitions
+// Common field definitions - UPDATED to include create_date and edit_history
 const medicalFields = `
   mr_medical_id as recordId,
   mr_student_id as id,
@@ -347,7 +359,9 @@ const medicalFields = `
   mr_referral_confirmation as referralConfirmation,
   mr_is_psychological as isPsychological,
   mr_is_medical as isMedical,
-  DATE_FORMAT(mr_record_date, '%m/%d/%Y') as date
+  DATE_FORMAT(mr_record_date, '%m/%d/%Y') as date,
+  mr_create_date as createDate,
+  mr_edit_history as editDate
 `;
 
 const infirmaryFields = `
@@ -365,7 +379,9 @@ const infirmaryFields = `
   mr_attachments as attachments,
   mr_is_psychological as isPsychological,
   mr_is_medical as isMedical,
-  DATE_FORMAT(mr_record_date, '%m/%d/%Y') as date
+  DATE_FORMAT(mr_record_date, '%m/%d/%Y') as date,
+  mr_create_date as createDate,
+  mr_edit_history as editDate
 `;
 
 // Common response handler
@@ -377,7 +393,8 @@ const handleMedicalResponse = (res, err, results, successMessage = '') => {
 
   const recordsWithAttachments = results.map(record => ({
     ...record,
-    attachments: record.attachments ? JSON.parse(record.attachments) : []
+    attachments: record.attachments ? JSON.parse(record.attachments) : [],
+    editDate: record.editDate ? JSON.parse(record.editDate) : []
   }));
 
   const response = { success: true, records: recordsWithAttachments, count: results.length };
@@ -460,18 +477,21 @@ router.post("/medical-records", upload.array('attachments', 5), (req, res) => {
   const attachments = processFiles(req.files, fileClassifications, actualUploaderType);
   const referralConfirmation = "Pending";
 
+  // UPDATED query to include create_date and edit_history
   const query = `
     INSERT INTO tbl_medical_records (
       mr_student_id, mr_student_name, mr_student_strand, mr_grade_level, mr_section,
       mr_school_year_semester, mr_subject, mr_status, mr_medical_details, mr_additional_remarks, mr_referred,
-      mr_referral_confirmation, mr_is_psychological, mr_is_medical, mr_attachments, mr_record_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())
+      mr_referral_confirmation, mr_is_psychological, mr_is_medical, mr_attachments, mr_record_date,
+      mr_create_date, mr_edit_history
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), NOW(), ?)
   `;
 
   const values = [
     studentId, studentName, strand, gradeLevel, section, schoolYearSemester, subject, status,
     medicalDetails, remarks, referredToGCO, referralConfirmation,
-    isPsychological, isMedical, attachments
+    isPsychological, isMedical, attachments,
+    '[]'
   ];
 
   pool.query(query, values, (err, results) => {
@@ -666,6 +686,7 @@ router.get("/medical-records/:id", (req, res) => {
 
     const record = results[0];
     record.attachments = record.attachments ? JSON.parse(record.attachments) : [];
+    record.editDate = record.editDate ? JSON.parse(record.editDate) : [];
     res.json({ success: true, record });
   });
 });
@@ -799,70 +820,82 @@ router.put("/medical-records/:id", upload.array('attachments', 5), (req, res) =>
 
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
 
-  const query = `
-    UPDATE tbl_medical_records 
-    SET 
-      mr_student_id = ?,
-      mr_student_name = ?,
-      mr_student_strand = ?,
-      mr_grade_level = ?,
-      mr_section = ?,
-      mr_school_year_semester = ?,
-      mr_subject = ?,
-      mr_status = ?,
-      mr_medical_details = ?,
-      mr_additional_remarks = ?,
-      mr_referred = ?,
-      mr_is_psychological = ?,
-      mr_is_medical = ?,
-      mr_attachments = ?
-    WHERE mr_medical_id = ?
-  `;
-
-  const values = [
-    studentId, studentName, strand, gradeLevel, section, schoolYearSemester || null,
-    subject, status, medicalDetails, remarks || "", referredToGCO || "No",
-    isPsychological, isMedical, attachmentsJson, recordId
-  ];
-
-  console.log('Executing update query with values:', values);
-
-  pool.query(query, values, (err, results) => {
-    if (err) {
-      console.error('Database update error:', err);
-      return res.status(500).json({
-        success: false,
-        error: "Database operation failed",
-        message: err.message
-      });
+  // First, get current edit history
+  pool.query(`SELECT mr_edit_history FROM tbl_medical_records WHERE mr_medical_id = ?`, [recordId], (selectErr, selectResults) => {
+    if (selectErr) {
+      console.error("Error fetching edit history:", selectErr);
+      return handleDatabaseError(selectErr, req, res);
     }
+    
+    const currentHistory = selectResults[0]?.mr_edit_history || '[]';
+    const updatedHistory = addEditHistory(currentHistory, uploaderType);
+    
+    const query = `
+      UPDATE tbl_medical_records 
+      SET 
+        mr_student_id = ?,
+        mr_student_name = ?,
+        mr_student_strand = ?,
+        mr_grade_level = ?,
+        mr_section = ?,
+        mr_school_year_semester = ?,
+        mr_subject = ?,
+        mr_status = ?,
+        mr_medical_details = ?,
+        mr_additional_remarks = ?,
+        mr_referred = ?,
+        mr_is_psychological = ?,
+        mr_is_medical = ?,
+        mr_attachments = ?,
+        mr_edit_history = ?
+      WHERE mr_medical_id = ?
+    `;
 
-    if (results.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Medical record not found"
-      });
-    }
+    const values = [
+      studentId, studentName, strand, gradeLevel, section, schoolYearSemester || null,
+      subject, status, medicalDetails, remarks || "", referredToGCO || "No",
+      isPsychological, isMedical, attachmentsJson, updatedHistory, recordId
+    ];
 
-    // Delete files marked for removal
-    if (filesToDelete) {
-      const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
-      filesToDeleteArray.forEach(filename => {
-        if (filename) {
-          const filePath = path.join(__dirname, '../../uploads/medical-records', filename);
-          if (fs.existsSync(filePath)) {
-            fs.unlink(filePath, (unlinkErr) => {
-              if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
-            });
+    console.log('Executing update query with values:', values);
+
+    pool.query(query, values, (err, results) => {
+      if (err) {
+        console.error('Database update error:', err);
+        return res.status(500).json({
+          success: false,
+          error: "Database operation failed",
+          message: err.message
+        });
+      }
+
+      if (results.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Medical record not found"
+        });
+      }
+
+      // Delete files marked for removal
+      if (filesToDelete) {
+        const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
+        filesToDeleteArray.forEach(filename => {
+          if (filename) {
+            const filePath = path.join(__dirname, '../../uploads/medical-records', filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlink(filePath, (unlinkErr) => {
+                if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
+              });
+            }
           }
-        }
-      });
-    }
+        });
+      }
 
-    res.json({
-      success: true,
-      message: "Medical record updated successfully",
-      recordId: recordId
+      res.json({
+        success: true,
+        message: "Medical record updated successfully",
+        recordId: recordId
+      });
     });
   });
 });

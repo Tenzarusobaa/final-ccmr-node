@@ -10,7 +10,7 @@ const { pool } = require("../../config/database");
 const CLIENT_ID = '299249406096-hav2dfea6lmr6uavth4ufuslll1o1sl4.apps.googleusercontent.com';
 const client = new OAuth2Client(CLIENT_ID);
 
-// Regular email/password login route
+// Regular email/password login route - CHECK ACTIVE STATUS
 router.post("/login", (req, res) => {
   const { email, password } = req.body;
 
@@ -18,6 +18,7 @@ router.post("/login", (req, res) => {
     return res.status(400).json({ message: "Missing credentials" });
   }
 
+  // Include status check in query
   pool.query(
     "SELECT * FROM users WHERE u_email = ? AND u_password = ?",
     [email, password],
@@ -29,6 +30,15 @@ router.post("/login", (req, res) => {
 
       if (results.length > 0) {
         const user = results[0];
+        
+        // Check if user is active
+        if (user.u_status !== 'Active') {
+          return res.status(403).json({ 
+            message: "User Deactivated by the Administrator",
+            deactivated: true,
+            deactivatedAt: user.deactivated_at
+          });
+        }
         
         const departmentMap = {
           'GCO': 'Guidance Counseling Office',
@@ -43,7 +53,8 @@ router.post("/login", (req, res) => {
             email: user.u_email,
             name: user.u_name,
             type: user.u_type,
-            department: departmentMap[user.u_type] || user.u_department
+            department: departmentMap[user.u_type] || user.u_department,
+            status: user.u_status
           }
         });
       } else {
@@ -53,7 +64,7 @@ router.post("/login", (req, res) => {
   );
 });
 
-// Google OAuth login route
+// Google OAuth login route - CHECK ACTIVE STATUS
 router.post("/google-login", async (req, res) => {
   const { token } = req.body;
 
@@ -86,8 +97,18 @@ router.post("/google-login", async (req, res) => {
         }
 
         if (results.length > 0) {
-          // User exists, log them in
+          // User exists, check if active
           const user = results[0];
+          
+          // Check if user is active
+          if (user.u_status !== 'Active') {
+            return res.status(403).json({ 
+              message: "User Deactivated by the Administrator",
+              deactivated: true,
+              deactivatedAt: user.deactivated_at
+            });
+          }
+          
           const departmentMap = {
             'GCO': 'Guidance Counseling Office',
             'INF': 'Infirmary',
@@ -104,6 +125,7 @@ router.post("/google-login", async (req, res) => {
               name: user.u_name,
               type: user.u_type,
               department: departmentMap[user.u_type] || user.u_department,
+              status: user.u_status,
               picture: picture
             }
           });

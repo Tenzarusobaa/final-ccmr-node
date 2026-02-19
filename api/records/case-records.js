@@ -15,8 +15,8 @@ const transporter = nodemailer.createTransport({
   port: 587,
   secure: false,
   auth: {
-    user: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
-    pass: process.env.EMAIL_PASS || 'dbai xvib tmgg lldf'
+    user: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
+    pass: process.env.EMAIL_PASS || 'wajg nkoo umby suku'
   },
   tls: { rejectUnauthorized: false }
 });
@@ -68,7 +68,7 @@ const sendEmailNotification = async (toDepartment, subject, message) => {
     }
 
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'shadewalker0050@gmail.com',
+      from: process.env.EMAIL_USER || 'ccmrnoreply@gmail.com',
       to: toEmail,
       subject: subject,
       html: `
@@ -158,7 +158,19 @@ const sendReferralEmail = (studentName, studentId, violationLevel, strand, grade
     });
 };
 
-// Common field definitions - UPDATED to include schoolYearSemester
+// Helper function to add edit history
+const addEditHistory = (currentHistory, userType) => {
+  const history = currentHistory ? JSON.parse(currentHistory) : [];
+  const newEntry = {
+    editedBy: userType,
+    editedAt: new Date().toISOString(),
+    timestamp: Date.now()
+  };
+  history.push(newEntry);
+  return JSON.stringify(history);
+};
+
+// Common field definitions - UPDATED to include create_date and edit_history
 const caseFields = `
   cr_case_id as caseNo,
   cr_student_id as id,
@@ -174,7 +186,9 @@ const caseFields = `
   cr_referral_confirmation as referralConfirmation,
   cr_general_description as description,
   cr_additional_remarks as remarks,
-  cr_attachments as attachments
+  cr_attachments as attachments,
+  cr_create_date as createDate,
+  cr_edit_history as editDate
 `;
 
 // Common response handler
@@ -186,7 +200,8 @@ const handleCaseResponse = (res, err, results, successMessage = '') => {
 
   const recordsWithAttachments = results.map(record => ({
     ...record,
-    attachments: record.attachments ? JSON.parse(record.attachments) : []
+    attachments: record.attachments ? JSON.parse(record.attachments) : [],
+    editDate: record.editDate ? JSON.parse(record.editDate) : []
   }));
 
   const response = { success: true, records: recordsWithAttachments, count: results.length };
@@ -222,7 +237,7 @@ const handleFileOperation = (req, res, operation) => {
   });
 };
 
-// Common case record handler - UPDATED to handle schoolYearSemester
+// Common case record handler - UPDATED to handle create_date and edit_history
 const handleCaseRecord = (req, res, isUpdate = false) => {
   const caseId = isUpdate ? req.params.id : null;
   const {
@@ -230,6 +245,9 @@ const handleCaseRecord = (req, res, isUpdate = false) => {
     violationLevel, status, description, remarks, referredToGCO,
     existingAttachments, filesToDelete
   } = req.body;
+
+  // Get user type from request (you need to pass this from frontend)
+  const userType = req.body.userType || 'OPD'; // Default to OPD if not specified
 
   let finalAttachments = [];
   if (existingAttachments) {
@@ -256,65 +274,111 @@ const handleCaseRecord = (req, res, isUpdate = false) => {
   const attachmentsJson = finalAttachments.length > 0 ? JSON.stringify(finalAttachments) : null;
   const referralConfirmation = referredToGCO === "Yes" ? "Pending" : null;
 
-  // UPDATED queries to include schoolYearSemester
-  const query = isUpdate ? `
-    UPDATE tbl_case_records 
-    SET 
-      cr_student_id = ?, cr_student_name = ?, cr_student_strand = ?, 
-      cr_student_grade_level = ?, cr_student_section = ?, cr_school_year_semester = ?,
-      cr_violation_level = ?, cr_status = ?, cr_referred = ?, cr_referral_confirmation = ?,
-      cr_general_description = ?, cr_additional_remarks = ?, cr_attachments = ?
-    WHERE cr_case_id = ?
-  ` : `
-    INSERT INTO tbl_case_records (
-      cr_student_id, cr_student_name, cr_student_strand, cr_student_grade_level, 
-      cr_student_section, cr_school_year_semester, cr_violation_level, cr_status, cr_referred, 
-      cr_referral_confirmation, cr_general_description, cr_additional_remarks,
-      cr_attachments, cr_case_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-  `;
-
-  // UPDATED values arrays to include schoolYearSemester
-  const values = isUpdate ? [
-    studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
-    violationLevel, status, referredToGCO, referralConfirmation,
-    description, remarks, attachmentsJson, caseId
-  ] : [
-    studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
-    violationLevel, status, referredToGCO, referralConfirmation,
-    description, remarks, attachmentsJson
-  ];
-
-  pool.query(query, values, (err, results) => {
-    if (err) return handleDatabaseError(err, req, res);
-
-    const recordId = isUpdate ? caseId : results.insertId;
-
-    if (filesToDelete && isUpdate) {
-      const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
-      filesToDeleteArray.forEach(filename => {
-        const filePath = path.join(__dirname, '../../uploads/case-records', filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlink(filePath, (unlinkErr) => {
-            if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
-          });
-        }
-      });
-    }
-
-    if (referredToGCO === "Yes") {
-      createNotification(studentName, studentId, violationLevel, recordId);
-      sendReferralEmail(studentName, studentId, violationLevel, strand, gradeLevel, section, schoolYearSemester, description, recordId, isUpdate);
-    }
-
-    res.json({
-      success: true,
-      message: `Case record ${isUpdate ? 'updated' : 'added'} successfully`,
-      caseId: isUpdate ? caseId : results.insertId,
-      affectedRows: results.affectedRows,
-      fileCount: req.files ? req.files.length : 0
+  // UPDATED queries to include create_date and edit_history
+  let query, values;
+  
+  if (isUpdate) {
+    // First, get current edit history
+    pool.query(`SELECT cr_edit_history FROM tbl_case_records WHERE cr_case_id = ?`, [caseId], (selectErr, selectResults) => {
+      if (selectErr) {
+        console.error("Error fetching edit history:", selectErr);
+        return handleDatabaseError(selectErr, req, res);
+      }
+      
+      const currentHistory = selectResults[0]?.cr_edit_history || '[]';
+      const updatedHistory = addEditHistory(currentHistory, userType);
+      
+      // Now update with new history
+      query = `
+        UPDATE tbl_case_records 
+        SET 
+          cr_student_id = ?, cr_student_name = ?, cr_student_strand = ?, 
+          cr_student_grade_level = ?, cr_student_section = ?, cr_school_year_semester = ?,
+          cr_violation_level = ?, cr_status = ?, cr_referred = ?, cr_referral_confirmation = ?,
+          cr_general_description = ?, cr_additional_remarks = ?, cr_attachments = ?,
+          cr_edit_history = ?
+        WHERE cr_case_id = ?
+      `;
+      
+      values = [
+        studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
+        violationLevel, status, referredToGCO, referralConfirmation,
+        description, remarks, attachmentsJson, updatedHistory, caseId
+      ];
+      
+      executeUpdate();
     });
-  });
+  } else {
+    // Insert - set create_date and empty edit_history array
+    query = `
+      INSERT INTO tbl_case_records (
+        cr_student_id, cr_student_name, cr_student_strand, cr_student_grade_level, 
+        cr_student_section, cr_school_year_semester, cr_violation_level, cr_status, cr_referred, 
+        cr_referral_confirmation, cr_general_description, cr_additional_remarks,
+        cr_attachments, cr_case_date, cr_create_date, cr_edit_history
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+    `;
+    
+    values = [
+      studentId, studentName, strand, gradeLevel, section, schoolYearSemester,
+      violationLevel, status, referredToGCO, referralConfirmation,
+      description, remarks, attachmentsJson, '[]'
+    ];
+    
+    executeInsert();
+  }
+
+  function executeInsert() {
+    pool.query(query, values, (err, results) => {
+      if (err) return handleDatabaseError(err, req, res);
+      
+      const recordId = results.insertId;
+      
+      if (referredToGCO === "Yes") {
+        createNotification(studentName, studentId, violationLevel, recordId);
+        sendReferralEmail(studentName, studentId, violationLevel, strand, gradeLevel, section, schoolYearSemester, description, recordId, false);
+      }
+      
+      res.json({
+        success: true,
+        message: `Case record added successfully`,
+        caseId: recordId,
+        affectedRows: results.affectedRows,
+        fileCount: req.files ? req.files.length : 0
+      });
+    });
+  }
+
+  function executeUpdate() {
+    pool.query(query, values, (err, results) => {
+      if (err) return handleDatabaseError(err, req, res);
+      
+      if (filesToDelete) {
+        const filesToDeleteArray = Array.isArray(filesToDelete) ? filesToDelete : [filesToDelete];
+        filesToDeleteArray.forEach(filename => {
+          const filePath = path.join(__dirname, '../../uploads/case-records', filename);
+          if (fs.existsSync(filePath)) {
+            fs.unlink(filePath, (unlinkErr) => {
+              if (unlinkErr) console.error('Error deleting old file:', unlinkErr);
+            });
+          }
+        });
+      }
+      
+      if (referredToGCO === "Yes") {
+        createNotification(studentName, studentId, violationLevel, caseId);
+        sendReferralEmail(studentName, studentId, violationLevel, strand, gradeLevel, section, schoolYearSemester, description, caseId, true);
+      }
+      
+      res.json({
+        success: true,
+        message: `Case record updated successfully`,
+        caseId: caseId,
+        affectedRows: results.affectedRows,
+        fileCount: req.files ? req.files.length : 0
+      });
+    });
+  }
 };
 
 // Routes
@@ -427,6 +491,7 @@ router.get("/case-records/:id", (req, res) => {
 
     const record = results[0];
     record.attachments = record.attachments ? JSON.parse(record.attachments) : [];
+    record.editDate = record.editDate ? JSON.parse(record.editDate) : [];
     res.json({ success: true, record });
   });
 });
